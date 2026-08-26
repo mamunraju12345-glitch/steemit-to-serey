@@ -1,130 +1,165 @@
 import os
 import json
-from beem import Steem
-from beem.account import Account
+import requests
+import time
 
 STEEM_USERNAME = os.environ["STEEM_USERNAME"]
 SEREY_USERNAME = os.environ.get("SEREY_USERNAME", "mamun")
 
 STEEM_NODES = [
     "https://api.steemit.com",
-    "https://api.steem.house",
+    "https://api.justyy.com",
+    "https://api.moecki.online",
+    "https://steem.619.io",
+    "https://api.steem-fanbase.com",
+    "https://api.steem.buzz",
     "https://steemd.privex.io",
+    "https://api.steemitdev.com",
 ]
 
 DATA_FILE = "synced_posts.json"
 
 
-def load_synced():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                return set(json.load(f))
-        except Exception:
-            return set()
-    return set()
+def steem_rpc(method, params):
+    """Try each Steem RPC node until one works."""
 
+    payload = {
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1
+    }
 
-def save_synced(posts):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(sorted(posts), f, indent=2)
-
-
-def get_steem():
-    """
-    Force beem to use Steem nodes.
-    Do not use Hive nodes.
-    """
     last_error = None
 
     for node in STEEM_NODES:
-        try:
-            print(f"Connecting to Steem node: {node}")
 
-            steem = Steem(
-                node=node,
-                keys=[]
+        try:
+            print(f"Connecting to: {node}")
+
+            response = requests.post(
+                node,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json"
+                },
+                timeout=20
             )
 
-            # Force a simple Steem RPC call
-            steem.get_block(1)
+            response.raise_for_status()
+
+            data = response.json()
+
+            if "error" in data:
+                raise RuntimeError(str(data["error"]))
 
             print(f"✅ Connected: {node}")
-            return steem
+
+            return data["result"]
 
         except Exception as e:
+
             last_error = e
-            print(f"⚠️ Node failed: {node}")
+
+            print(f"❌ Failed: {node}")
             print(f"   {e}")
 
+            time.sleep(1)
+
     raise RuntimeError(
-        f"Could not connect to any Steem node. Last error: {last_error}"
+        f"All Steem RPC nodes failed. Last error: {last_error}"
     )
 
 
-def get_recent_posts(steem):
-    print(f"Reading posts from @{STEEM_USERNAME}...")
+def load_synced_posts():
 
-    account = Account(
-        STEEM_USERNAME,
-        blockchain_instance=steem
+    if not os.path.exists(DATA_FILE):
+        return set()
+
+    try:
+
+        with open(DATA_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        return set(data)
+
+    except Exception:
+        return set()
+
+
+def save_synced_posts(posts):
+
+    with open(DATA_FILE, "w", encoding="utf-8") as file:
+
+        json.dump(
+            sorted(posts),
+            file,
+            indent=2,
+            ensure_ascii=False
+        )
+
+
+def get_recent_posts():
+
+    print()
+    print("=" * 60)
+    print(f"Fetching posts from @{STEEM_USERNAME}")
+    print("=" * 60)
+
+    result = steem_rpc(
+        "condenser_api.get_discussions_by_blog",
+        {
+            "tag": STEEM_USERNAME,
+            "limit": 20
+        }
     )
 
-    posts = account.get_blog(
-        limit=20,
-        raw_data=False
-    )
+    posts = []
 
-    result = []
+    for post in result:
 
-    for post in posts:
-
-        author = post.get("author")
-
-        if author != STEEM_USERNAME:
+        if post.get("author") != STEEM_USERNAME:
             continue
 
-        permlink = post.get("permlink")
-
-        if not permlink:
-            continue
-
-        result.append({
-            "author": author,
-            "permlink": permlink,
+        posts.append({
+            "author": post.get("author"),
+            "permlink": post.get("permlink"),
             "title": post.get("title", ""),
             "body": post.get("body", ""),
-            "created": str(post.get("created", "")),
             "category": post.get("category", ""),
+            "created": post.get("created", ""),
+            "json_metadata": post.get("json_metadata", "{}")
         })
 
-    return result
+    return posts
 
 
 def main():
 
-    print("=" * 50)
-    print(" STEEMIT → SEREY AUTOMATION")
-    print("=" * 50)
+    print()
+    print("=" * 60)
+    print("       STEEMIT → SEREY AUTOMATION")
+    print("=" * 60)
 
     print(f"Steemit account : @{STEEM_USERNAME}")
     print(f"Serey account   : @{SEREY_USERNAME}")
 
-    synced = load_synced()
+    synced_posts = load_synced_posts()
 
-    steem = get_steem()
+    posts = get_recent_posts()
 
-    posts = get_recent_posts(steem)
-
-    print(f"\nFound {len(posts)} posts.")
+    print()
+    print(f"Total posts found: {len(posts)}")
 
     new_posts = []
 
     for post in posts:
 
-        post_id = f'{post["author"]}/{post["permlink"]}'
+        post_id = (
+            f'{post["author"]}/{post["permlink"]}'
+        )
 
-        if post_id in synced:
+        if post_id in synced_posts:
             continue
 
         new_posts.append(post)
@@ -133,22 +168,39 @@ def main():
 
     for post in new_posts:
 
-        print("\n" + "-" * 50)
-        print("NEW STEEMIT POST")
-        print("-" * 50)
+        print()
+        print("-" * 60)
+        print("NEW POST")
+        print("-" * 60)
 
-        print("Title:", post["title"])
-        print("Author:", post["author"])
-        print("Permlink:", post["permlink"])
-        print("Created:", post["created"])
+        print("Title    :", post["title"])
+        print("Author   :", post["author"])
+        print("Permlink :", post["permlink"])
+        print("Created  :", post["created"])
+        print("Category :", post["category"])
 
-        # Serey publishing will be handled here.
-        # We intentionally do not mark the post as synced
-        # until Serey publishing succeeds.
+        print()
+        print("Steemit URL:")
+        print(
+            f'https://steemit.com/{post["category"]}/'
+            f'@{post["author"]}/{post["permlink"]}'
+        )
 
-    print("\n" + "=" * 50)
+        # --------------------------------------------------
+        # SEREY PUBLISHING
+        # --------------------------------------------------
+        #
+        # এখানে Serey publishing function যুক্ত হবে।
+        #
+        # Serey publish সফল হওয়ার আগে post-কে
+        # synced হিসেবে mark করা হবে না।
+        #
+        # --------------------------------------------------
+
+    print()
+    print("=" * 60)
     print("SCAN COMPLETED")
-    print("=" * 50)
+    print("=" * 60)
 
 
 if __name__ == "__main__":
