@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import time
+import re
 from playwright.sync_api import sync_playwright
 
 STEEM_USERNAME = os.environ["STEEM_USERNAME"]
@@ -64,11 +65,37 @@ def save_synced_posts(posts):
         json.dump(sorted(posts), file, indent=2, ensure_ascii=False)
 
 
+def extract_image_and_clean_body(body_text, json_metadata_str):
+    """Extract main image for thumbnail & clean raw image links from body"""
+    first_image_url = None
+
+    # 1. Try to get main image from json_metadata
+    try:
+        meta = json.loads(json_metadata_str)
+        if isinstance(meta, dict) and "image" in meta and isinstance(meta["image"], list) and meta["image"]:
+            first_image_url = meta["image"][0]
+    except Exception:
+        pass
+
+    # 2. Fallback: regex search first image in body
+    if not first_image_url:
+        img_match = re.search(r'https?://\S+\.(?:png|jpg|jpeg|gif|webp)', body_text, re.IGNORECASE)
+        if img_match:
+            first_image_url = img_match.group(0)
+
+    # 3. Clean body text (remove markdown images and raw image links)
+    clean_body = re.sub(r'!\[.*?\]\(.*?\)', '', body_text)
+    clean_body = re.sub(r'https?://\S+\.(?:png|jpg|jpeg|gif|webp)', '', clean_body, flags=re.IGNORECASE)
+    clean_body = re.sub(r'\n\s*\n', '\n\n', clean_body).strip()
+
+    return first_image_url, clean_body
+
+
 def get_recent_posts():
     print(f"\nFetching posts from Steemit: @{STEEM_USERNAME}", flush=True)
     result = steem_rpc(
         "condenser_api.get_discussions_by_blog",
-        {"tag": STEEM_USERNAME, "limit": 20}
+        {"tag": STEEM_USERNAME, "limit": 50}
     )
 
     posts = []
@@ -76,20 +103,29 @@ def get_recent_posts():
         if post.get("author") != STEEM_USERNAME:
             continue
 
+        raw_body = post.get("body", "")
+        meta_str = post.get("json_metadata", "{}")
+        image_url, clean_body = extract_image_and_clean_body(raw_body, meta_str)
+
         posts.append({
             "author": post.get("author"),
             "permlink": post.get("permlink"),
             "title": post.get("title", ""),
-            "body": post.get("body", ""),
+            "body": clean_body,
+            "image": image_url,
             "category": post.get("category", ""),
             "created": post.get("created", "")
         })
 
+    # Reverse list to process OLDEST posts first (1 year ago to recent)
+    posts.reverse()
     return posts
 
 
 def publish_to_serey(page, post):
     print(f"\n---> Publishing to Serey: {post['title']}", flush=True)
+    temp_img_path = "temp_thumbnail.jpg"
+    
     try:
         # 1. Open New Post URL
         page.goto("https://serey.io/blog/post/new", timeout=60000)
@@ -100,48 +136,67 @@ def publish_to_serey(page, post):
         title_box.fill(post["title"])
         print("  - Title filled!", flush=True)
 
-        # 3. Fill Content ("Enter content...")
+        # 3. Fill Clean Body Content ("Enter content...")
         body_box = page.locator('div[contenteditable="true"], textarea[placeholder*="content" i], textarea').first
         body_box.fill(post["body"])
-        print("  - Content filled!", flush=True)
+        print("  - Clean body content filled!", flush=True)
+
+        # 4. Upload Thumbnail Image (If image URL exists)
+        if post.get("image"):
+            try:
+                print(f"  - Downloading thumbnail image...", flush=True)
+                img_resp = requests.get(post["image"], timeout=15)
+                if img_resp.status_code == 200:
+                    with open(temp_img_path, "wb") as f:
+                        f.write(img_resp.content)
+
+                    file_input = page.locator('input[type="file"]').first
+                    if file_input.count() > 0:
+                        file_input.set_input_files(temp_img_path)
+                        print("  - Thumbnail image uploaded!", flush=True)
+                        page.wait_for_timeout(3000)
+            except Exception as img_err:
+                print(f"  - Thumbnail upload skipped: {img_err}", flush=True)
+
         page.wait_for_timeout(2000)
 
-        # 4. Click First "Publish" Button
+        # 5. Click First "Publish" Button
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
-        
-        # 5. Wait 6 seconds for "Preparing to publish" loading to finish
         page.wait_for_timeout(6000)
 
-        # Click Category Selector inside modal
-        try:
-            dropdown = page.locator('div:has-text("Select category"), .ant-select, input[placeholder*="category" i]').first
-            dropdown.click(force=True)
-            page.wait_for_timeout(1500)
+        # 6. Handle Category Modal Popup ("Please choose category")
+        page.wait_for_selector('.ant-modal-content', timeout=10000)
+        modal = page.locator('.ant-modal-content')
 
-            option = page.locator('.ant-select-item-option, div[title="Tech"], div[title="Crypto"], li').first
-            if option.count() > 0:
-                option.click(force=True)
-            else:
-                page.keyboard.press("ArrowDown")
-                page.keyboard.press("Enter")
-            print("  - Category selected!", flush=True)
-        except Exception as err:
-            print(f"  - Category auto-selecting via keyboard...", flush=True)
-            page.keyboard.press("Tab")
+        # Click Category Selector inside modal
+        cat_select = modal.locator('.ant-select-selector, .ant-select').first
+        cat_select.click(force=True)
+        page.wait_for_timeout(1500)
+
+        # Select first option in dropdown
+        option = page.locator('.ant-select-item-option, .ant-select-dropdown div').first
+        if option.count() > 0:
+            option.click(force=True)
+        else:
             page.keyboard.press("ArrowDown")
             page.keyboard.press("Enter")
+        print("  - Category selected!", flush=True)
+        page.wait_for_timeout(1500)
 
-        page.wait_for_timeout(2000)
-
-        # 6. Click Final "Publish" Button inside Category Modal
-        final_publish = page.locator('.ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish"), button:has-text("Publish")').last
-        final_publish.click(force=True)
+        # 7. Click Final "Publish" Button inside Category Modal
+        modal.locator('button:has-text("Publish")').first.click(force=True)
         page.wait_for_timeout(8000)
+
+        # Clean up temp image file
+        if os.path.exists(temp_img_path):
+            os.remove(temp_img_path)
 
         print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
         return True
     except Exception as e:
+        if os.path.exists(temp_img_path):
+            os.remove(temp_img_path)
         print(f"❌ Failed to publish post on Serey: {e}", flush=True)
         return False
 
@@ -160,10 +215,14 @@ def main():
         if post_id not in synced_posts:
             new_posts.append(post)
 
-    print(f"Total posts found: {len(posts)}", flush=True)
-    print(f"New posts to publish: {len(new_posts)}", flush=True)
+    print(f"Total posts fetched: {len(posts)}", flush=True)
+    print(f"Unsynced posts available: {len(new_posts)}", flush=True)
 
-    if not new_posts:
+    # LIMIT TO EXACTLY 1 POST PER RUN
+    new_posts_to_run = new_posts[:1]
+    print(f"Publishing in this run (Limit = 1): {len(new_posts_to_run)}", flush=True)
+
+    if not new_posts_to_run:
         print("No new posts to sync!", flush=True)
         return
 
@@ -197,8 +256,8 @@ def main():
             browser.close()
             return
 
-        # Publish Each Post
-        for post in new_posts:
+        # Publish 1 Post per run
+        for post in new_posts_to_run:
             success = publish_to_serey(page, post)
             if success:
                 post_id = f'{post["author"]}/{post["permlink"]}'
@@ -208,7 +267,7 @@ def main():
         browser.close()
 
     print("\n" + "=" * 60, flush=True)
-    print("SYNC COMPLETED SUCCESSFULLY", flush=True)
+    print("SYNC COMPLETED SUCCESSFULLY")
     print("=" * 60, flush=True)
 
 
