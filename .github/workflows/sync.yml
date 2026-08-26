@@ -1,4 +1,4 @@
-     name: Steemit to Serey
+name: Steemit to Serey
 
 on:
   workflow_dispatch:
