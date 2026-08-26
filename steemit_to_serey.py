@@ -59,6 +59,11 @@ def load_synced_posts():
         return set()
 
 
+def save_synced_posts(posts):
+    with open(DATA_FILE, "w", encoding="utf-8") as file:
+        json.dump(sorted(posts), file, indent=2, ensure_ascii=False)
+
+
 def get_recent_posts():
     print(f"\nFetching posts from Steemit: @{STEEM_USERNAME}")
     result = steem_rpc(
@@ -83,12 +88,56 @@ def get_recent_posts():
     return posts
 
 
+def publish_to_serey(page, post):
+    print(f"\nPublishing to Serey: {post['title']}")
+    try:
+        page.goto("https://serey.io/create-post", timeout=60000)
+        page.wait_for_timeout(4000)
+
+        # Fill Title
+        page.locator('input[placeholder*="Title"], input[name="title"], textarea[placeholder*="Title"]').first.fill(post["title"])
+        
+        # Fill Category / Tags
+        category = post["category"] if post["category"] else "general"
+        try:
+            page.locator('input[placeholder*="Tag"], input[name="tags"]').first.fill(category)
+        except Exception:
+            pass
+
+        # Fill Body
+        page.locator('textarea[placeholder*="Story"], textarea[name="body"], div[contenteditable="true"]').first.fill(post["body"])
+        page.wait_for_timeout(2000)
+        
+        # Click Publish Button
+        page.locator('button:has-text("Publish"), button:has-text("Post"), input[type="submit"]').first.click()
+        page.wait_for_timeout(7000)
+        print(f"✅ Successfully published on Serey: {post['title']}")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to publish post on Serey: {e}")
+        return False
+
+
 def main():
     print("=" * 60)
-    print("       STEEMIT → SEREY AUTOMATION (DEBUG MODE)")
+    print("       STEEMIT → SEREY AUTOMATION")
     print("=" * 60)
 
+    synced_posts = load_synced_posts()
     posts = get_recent_posts()
+
+    new_posts = []
+    for post in posts:
+        post_id = f'{post["author"]}/{post["permlink"]}'
+        if post_id not in synced_posts:
+            new_posts.append(post)
+
+    print(f"Total posts found: {len(posts)}")
+    print(f"New posts to publish: {len(new_posts)}")
+
+    if not new_posts:
+        print("No new posts to sync!")
+        return
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -97,33 +146,42 @@ def main():
         )
         page = context.new_page()
 
-        print("\nOpening Serey.io to inspect login elements...")
+        print("\nLogging into Serey.io...")
         try:
-            page.goto("https://serey.io", timeout=60000)
+            # Go directly to Serey Login Modal URL
+            page.goto("https://serey.io/login", timeout=60000)
             page.wait_for_timeout(4000)
 
-            # Click Log In button in Navbar
-            login_nav_btn = page.locator('.nav-btn-space, button:has-text("Log in"), a:has-text("Log in")').first
-            login_nav_btn.click()
-            page.wait_for_timeout(4000)
+            # 1. Fill Username (Exact placeholder: "Username")
+            username_field = page.locator('input[placeholder="Username"]').first
+            username_field.fill(SEREY_LOGIN)
 
-            # Print Modal Inputs details to GitHub log
-            inputs = page.locator('input').all()
-            print(f"\n--- Found {len(inputs)} input fields on Serey ---")
-            for idx, inp in enumerate(inputs):
-                placeholder = inp.get_attribute("placeholder") or ""
-                name = inp.get_attribute("name") or ""
-                inp_type = inp.get_attribute("type") or ""
-                inp_id = inp.get_attribute("id") or ""
-                print(f"Input #{idx+1} -> type='{inp_type}', placeholder='{placeholder}', name='{name}', id='{inp_id}'")
+            # 2. Fill Password / Private Key (Exact placeholder: "Private Key or Password")
+            password_field = page.locator('input[placeholder="Private Key or Password"]').first
+            password_field.fill(SEREY_PASSWORD)
 
+            # 3. Click blue "Log in" button
+            login_btn = page.locator('button:has-text("Log in"), button:has-text("Log In")').first
+            login_btn.click()
+            page.wait_for_timeout(6000)
+            print("✅ Logged into Serey successfully!")
         except Exception as e:
-            print(f"❌ Error during debug inspection: {e}")
+            print(f"❌ Login failed: {e}")
+            browser.close()
+            return
+
+        # Publish Each Post
+        for post in new_posts:
+            success = publish_to_serey(page, post)
+            if success:
+                post_id = f'{post["author"]}/{post["permlink"]}'
+                synced_posts.add(post_id)
+                save_synced_posts(synced_posts)
 
         browser.close()
 
     print("\n" + "=" * 60)
-    print("DEBUG INSPECTION COMPLETED")
+    print("SYNC COMPLETED SUCCESSFULLY")
     print("=" * 60)
 
 
