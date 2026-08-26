@@ -94,25 +94,70 @@ def publish_to_serey(page, post):
         page.goto("https://serey.io/create-post", timeout=60000)
         page.wait_for_timeout(4000)
 
-        # Fill Title
-        page.locator('input[placeholder*="Title"], input[name="title"], textarea[placeholder*="Title"]').first.fill(post["title"])
-        print("  - Title filled!", flush=True)
-        
-        # Fill Category / Tags
-        category = post["category"] if post["category"] else "general"
-        try:
-            page.locator('input[placeholder*="Tag"], input[name="tags"]').first.fill(category)
-            print("  - Tag filled!", flush=True)
-        except Exception:
-            pass
+        if page.locator('input, textarea').count() == 0:
+            page.goto("https://serey.io/submit", timeout=60000)
+            page.wait_for_timeout(4000)
 
-        # Fill Body
-        page.locator('textarea[placeholder*="Story"], textarea[name="body"], div[contenteditable="true"]').first.fill(post["body"])
-        print("  - Body text filled!", flush=True)
+        # Fill Title
+        title_filled = False
+        title_locators = [
+            page.locator('input[placeholder*="title" i]'),
+            page.locator('input[placeholder*="Title"]'),
+            page.locator('input[name="title"]'),
+            page.locator('textarea[placeholder*="title" i]'),
+            page.locator('input[type="text"]').first
+        ]
+        for loc in title_locators:
+            if loc.count() > 0:
+                try:
+                    loc.first.fill(post["title"])
+                    title_filled = True
+                    print("  - Title filled!", flush=True)
+                    break
+                except Exception:
+                    pass
+
+        if not title_filled:
+            raise RuntimeError("Could not find Title input field")
+
+        # Fill Tags / Category
+        category = post["category"] if post["category"] else "general"
+        tag_locators = [
+            page.locator('input[placeholder*="tag" i]'),
+            page.locator('input[placeholder*="category" i]'),
+            page.locator('input[name="tags"]')
+        ]
+        for tag_loc in tag_locators:
+            if tag_loc.count() > 0:
+                try:
+                    tag_loc.first.fill(category)
+                    print("  - Category/Tag filled!", flush=True)
+                    break
+                except Exception:
+                    pass
+
+        # Fill Body Content
+        body_locators = [
+            page.locator('textarea[placeholder*="story" i]'),
+            page.locator('textarea[placeholder*="content" i]'),
+            page.locator('textarea[name="body"]'),
+            page.locator('div[contenteditable="true"]'),
+            page.locator('textarea').last
+        ]
+        for body_loc in body_locators:
+            if body_loc.count() > 0:
+                try:
+                    body_loc.first.fill(post["body"])
+                    print("  - Body content filled!", flush=True)
+                    break
+                except Exception:
+                    pass
+
         page.wait_for_timeout(2000)
-        
+
         # Click Publish Button
-        page.locator('button:has-text("Publish"), button:has-text("Post"), input[type="submit"]').first.click(force=True)
+        publish_btn = page.locator('button:has-text("Publish"), button:has-text("Post"), button:has-text("Submit"), input[type="submit"]').first
+        publish_btn.click(force=True)
         page.wait_for_timeout(7000)
         print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
         return True
