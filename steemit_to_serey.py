@@ -65,7 +65,7 @@ def save_synced_posts(posts):
 
 
 def get_recent_posts():
-    print(f"\nFetching posts from Steemit: @{STEEM_USERNAME}")
+    print(f"\nFetching posts from Steemit: @{STEEM_USERNAME}", flush=True)
     result = steem_rpc(
         "condenser_api.get_discussions_by_blog",
         {"tag": STEEM_USERNAME, "limit": 20}
@@ -89,39 +89,42 @@ def get_recent_posts():
 
 
 def publish_to_serey(page, post):
-    print(f"\nPublishing to Serey: {post['title']}")
+    print(f"\n---> Trying to Publish on Serey: {post['title']}", flush=True)
     try:
         page.goto("https://serey.io/create-post", timeout=60000)
         page.wait_for_timeout(4000)
 
         # Fill Title
         page.locator('input[placeholder*="Title"], input[name="title"], textarea[placeholder*="Title"]').first.fill(post["title"])
+        print("  - Title filled!", flush=True)
         
         # Fill Category / Tags
         category = post["category"] if post["category"] else "general"
         try:
             page.locator('input[placeholder*="Tag"], input[name="tags"]').first.fill(category)
+            print("  - Tag filled!", flush=True)
         except Exception:
             pass
 
         # Fill Body
         page.locator('textarea[placeholder*="Story"], textarea[name="body"], div[contenteditable="true"]').first.fill(post["body"])
+        print("  - Body text filled!", flush=True)
         page.wait_for_timeout(2000)
         
         # Click Publish Button
         page.locator('button:has-text("Publish"), button:has-text("Post"), input[type="submit"]').first.click(force=True)
         page.wait_for_timeout(7000)
-        print(f"✅ Successfully published on Serey: {post['title']}")
+        print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
         return True
     except Exception as e:
-        print(f"❌ Failed to publish post on Serey: {e}")
+        print(f"❌ Failed to publish post on Serey: {e}", flush=True)
         return False
 
 
 def main():
-    print("=" * 60)
-    print("       STEEMIT → SEREY AUTOMATION")
-    print("=" * 60)
+    print("=" * 60, flush=True)
+    print("       STEEMIT → SEREY AUTOMATION", flush=True)
+    print("=" * 60, flush=True)
 
     synced_posts = load_synced_posts()
     posts = get_recent_posts()
@@ -132,11 +135,11 @@ def main():
         if post_id not in synced_posts:
             new_posts.append(post)
 
-    print(f"Total posts found: {len(posts)}")
-    print(f"New posts to publish: {len(new_posts)}")
+    print(f"Total posts found: {len(posts)}", flush=True)
+    print(f"New posts to publish: {len(new_posts)}", flush=True)
 
     if not new_posts:
-        print("No new posts to sync!")
+        print("No new posts to sync!", flush=True)
         return
 
     with sync_playwright() as p:
@@ -147,31 +150,25 @@ def main():
         )
         page = context.new_page()
 
-        print("\nLogging into Serey.io...")
+        print("\nLogging into Serey.io...", flush=True)
         try:
             page.goto("https://serey.io", timeout=60000)
             page.wait_for_timeout(4000)
 
-            # Target the exact "Log in" button directly
-            print("Clicking Log in button on Serey...")
+            print("Clicking Log in button...", flush=True)
             page.locator('a:has-text("Log in"), button:has-text("Log in"), a:has-text("Log In"), button:has-text("Log In")').first.click(force=True)
             page.wait_for_timeout(5000)
 
-            # Wait for Username input inside modal
             page.wait_for_selector('input[placeholder="Username"], input[placeholder*="Username"]', timeout=20000)
 
-            # 1. Fill Username
             page.locator('input[placeholder="Username"], input[placeholder*="Username"]').first.fill(SEREY_LOGIN)
-
-            # 2. Fill Password / Private Key
             page.locator('input[placeholder="Private Key or Password"], input[placeholder*="Private Key"]').first.fill(SEREY_PASSWORD)
 
-            # 3. Click blue Log in button inside modal
             page.locator('.ant-modal-content button:has-text("Log in"), .ant-modal-content button:has-text("Log In"), button:has-text("Log in")').last.click(force=True)
             page.wait_for_timeout(6000)
-            print("✅ Logged into Serey successfully!")
+            print("✅ LOGGED INTO SEREY SUCCESSFULLY!", flush=True)
         except Exception as e:
-            print(f"❌ Login failed: {e}")
+            print(f"❌ Login failed: {e}", flush=True)
             browser.close()
             return
 
@@ -185,9 +182,9 @@ def main():
 
         browser.close()
 
-    print("\n" + "=" * 60)
-    print("SYNC COMPLETED SUCCESSFULLY")
-    print("=" * 60)
+    print("\n" + "=" * 60, flush=True)
+    print("SYNC COMPLETED SUCCESSFULLY", flush=True)
+    print("=" * 60, flush=True)
 
 
 if __name__ == "__main__":
