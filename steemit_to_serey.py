@@ -109,7 +109,7 @@ def publish_to_serey(page, post):
         page.wait_for_timeout(2000)
         
         # Click Publish Button
-        page.locator('button:has-text("Publish"), button:has-text("Post"), input[type="submit"]').first.click()
+        page.locator('button:has-text("Publish"), button:has-text("Post"), input[type="submit"]').first.click(force=True)
         page.wait_for_timeout(7000)
         print(f"✅ Successfully published on Serey: {post['title']}")
         return True
@@ -140,12 +140,11 @@ def main():
         return
 
     with sync_playwright() as p:
+        # Launch Desktop Browser mode
         browser = p.chromium.launch(headless=True)
-        # Setting mobile viewport matching your phone screenshot
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-            viewport={"width": 390, "height": 844},
-            is_mobile=True
+            viewport={"width": 1280, "height": 800},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         )
         page = context.new_page()
 
@@ -154,16 +153,12 @@ def main():
             page.goto("https://serey.io", timeout=60000)
             page.wait_for_timeout(4000)
 
-            # Check if login modal is open, if not click Log in button
-            username_locator = page.locator('input[placeholder="Username"], input[placeholder*="Username"]')
-            
-            if username_locator.count() == 0:
-                print("Clicking Log in button to open modal...")
-                # Click any login button/link on home page
-                page.locator('a[href*="login"], button:has-text("Log in"), a:has-text("Log in"), .nav-btn-space').first.click()
-                page.wait_for_timeout(4000)
+            # Force click the Log in button in Desktop view
+            print("Clicking Log in button on Desktop view...")
+            page.locator('.nav-btn-space, button:has-text("Log in"), a:has-text("Log in")').first.click(force=True)
+            page.wait_for_timeout(4000)
 
-            # Wait for Username input field to be visible inside modal
+            # Wait for Username input inside modal
             page.wait_for_selector('input[placeholder="Username"], input[placeholder*="Username"]', timeout=15000)
 
             # 1. Fill Username
@@ -173,7 +168,7 @@ def main():
             page.locator('input[placeholder="Private Key or Password"], input[placeholder*="Private Key"]').first.fill(SEREY_PASSWORD)
 
             # 3. Click blue Log in button inside modal
-            page.locator('.ant-modal-content button:has-text("Log in"), button:has-text("Log in")').last.click()
+            page.locator('.ant-modal-content button:has-text("Log in"), button:has-text("Log in")').last.click(force=True)
             page.wait_for_timeout(6000)
             print("✅ Logged into Serey successfully!")
         except Exception as e:
