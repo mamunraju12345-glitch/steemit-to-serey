@@ -89,23 +89,28 @@ def get_recent_posts():
 
 
 def publish_to_serey(page, post):
-    """Playwright using browser to log in and post on Serey"""
     print(f"\nPublishing to Serey: {post['title']}")
-    
-    # 1. Open Serey Submit/Create page
-    page.goto("https://serey.io/create-post", timeout=60000)
-    page.wait_for_timeout(3000)
-
-    # 2. Fill Title, Category, and Body
     try:
-        page.fill('input[placeholder*="Title"], input[name="title"]', post["title"])
-        category = post["category"] if post["category"] else "general"
-        page.fill('input[placeholder*="Tag"], input[name="tags"]', category)
-        page.fill('textarea[placeholder*="Story"], textarea[name="body"], div[contenteditable="true"]', post["body"])
+        page.goto("https://serey.io/create-post", timeout=60000)
+        page.wait_for_timeout(4000)
+
+        # Title
+        page.locator('input[placeholder*="Title"], input[name="title"], textarea[placeholder*="Title"]').first.fill(post["title"])
         
-        # 3. Click Submit/Publish
-        page.click('button:has-text("Publish"), button:has-text("Post")')
-        page.wait_for_timeout(5000)
+        # Category / Tags
+        category = post["category"] if post["category"] else "general"
+        try:
+            page.locator('input[placeholder*="Tag"], input[name="tags"]').first.fill(category)
+        except Exception:
+            pass
+
+        # Body
+        page.locator('textarea[placeholder*="Story"], textarea[name="body"], div[contenteditable="true"]').first.fill(post["body"])
+        page.wait_for_timeout(2000)
+        
+        # Publish Button
+        page.locator('button:has-text("Publish"), button:has-text("Post"), input[type="submit"]').first.click()
+        page.wait_for_timeout(7000)
         print(f"✅ Successfully published on Serey: {post['title']}")
         return True
     except Exception as e:
@@ -134,29 +139,45 @@ def main():
         print("No new posts to sync!")
         return
 
-    # Start Playwright Browser
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
+        # Real user-agent to prevent bot detection
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
         page = context.new_page()
 
-        # Login to Serey
         print("\nLogging into Serey.io...")
-        page.goto("https://serey.io/login", timeout=60000)
-        page.wait_for_timeout(3000)
-
         try:
-            page.fill('input[name="username"], input[type="text"]', SEREY_LOGIN)
-            page.fill('input[name="password"], input[type="password"]', SEREY_PASSWORD)
-            page.click('button[type="submit"], button:has-text("Log in")')
-            page.wait_for_timeout(5000)
+            page.goto("https://serey.io", timeout=60000)
+            page.wait_for_timeout(4000)
+
+            # Click log in button on Serey home page if present
+            login_btn = page.locator('a:has-text("Log in"), button:has-text("Log in"), a:has-text("Sign in"), button:has-text("Sign in")')
+            if login_btn.count() > 0:
+                login_btn.first.click()
+                page.wait_for_timeout(3000)
+            else:
+                page.goto("https://serey.io/login", timeout=60000)
+                page.wait_for_timeout(3000)
+
+            # Fill username & password with smart locators
+            username_input = page.locator('input[placeholder*="Username"], input[placeholder*="Account"], input[name="username"], input[type="text"]').first
+            password_input = page.locator('input[placeholder*="Password"], input[name="password"], input[type="password"]').first
+
+            username_input.fill(SEREY_LOGIN)
+            password_input.fill(SEREY_PASSWORD)
+
+            # Submit login form
+            submit_btn = page.locator('button[type="submit"], button:has-text("Log in"), button:has-text("Sign in"), input[type="submit"]').first
+            submit_btn.click()
+            page.wait_for_timeout(6000)
             print("✅ Logged into Serey successfully!")
         except Exception as e:
             print(f"❌ Login failed: {e}")
             browser.close()
             return
 
-        # Publish Each Post
         for post in new_posts:
             success = publish_to_serey(page, post)
             if success:
