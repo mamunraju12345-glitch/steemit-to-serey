@@ -155,20 +155,21 @@ def publish_to_serey(page, post):
     temp_img_path = "temp_thumbnail.jpg"
     
     try:
+        # 1. Open New Post URL
         page.goto("https://serey.io/blog/post/new", timeout=60000)
         page.wait_for_timeout(4000)
 
-        # Title
+        # 2. Fill Title
         title_box = page.locator('input[placeholder*="title" i], input[placeholder*="Title"]').first
         title_box.fill(post["title"])
         print("  - Title filled!", flush=True)
 
-        # Clean Body
+        # 3. Fill Clean Body
         body_box = page.locator('div[contenteditable="true"], textarea[placeholder*="content" i], textarea').first
         body_box.fill(post["body"])
         print("  - Clean body content filled!", flush=True)
 
-        # Upload Thumbnail Image
+        # 4. Upload Thumbnail Image
         if post.get("image"):
             try:
                 print(f"  - Downloading thumbnail image...", flush=True)
@@ -181,50 +182,49 @@ def publish_to_serey(page, post):
                     if file_input.count() > 0:
                         file_input.set_input_files(temp_img_path)
                         print("  - Thumbnail image uploaded!", flush=True)
-                        page.wait_for_timeout(6000)  # Wait for image upload processing
+                        page.wait_for_timeout(5000)
             except Exception as img_err:
                 print(f"  - Thumbnail upload skipped: {img_err}", flush=True)
 
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(2000)
 
-        # Click First Publish Button
+        # 5. Click First "Publish" Button
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
         page.wait_for_timeout(5000)
 
-        # Handle Category Popup Modal
-        try:
-            page.wait_for_selector('.ant-modal-content', timeout=15000)
-            modal = page.locator('.ant-modal-content')
+        # 6. Handle Category Modal Popup
+        page.wait_for_selector('.ant-modal-content', timeout=20000)
+        modal = page.locator('.ant-modal-content')
+        page.wait_for_timeout(2000)
 
-            # Click category dropdown
-            modal.click(force=True)
-            page.wait_for_timeout(1500)
+        # Click Category Selector inside modal
+        cat_select = modal.locator('.ant-select-selector, .ant-select').first
+        cat_select.click(force=True)
+        page.wait_for_timeout(1500)
 
-            # Select category option
-            option = page.locator('.ant-select-item-option, div[title="Tech"], div[title="Crypto"], li').first
-            if option.count() > 0:
-                option.click(force=True)
-            else:
-                page.keyboard.press("Tab")
-                page.keyboard.press("ArrowDown")
-                page.keyboard.press("Enter")
-            print("  - Category selected!", flush=True)
-            page.wait_for_timeout(2000)
+        # Select option
+        option = page.locator('.ant-select-item-option, div[title="Tech"], div[title="Crypto"], li').first
+        if option.count() > 0:
+            option.click(force=True)
+        else:
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+        print("  - Category selected!", flush=True)
+        page.wait_for_timeout(2000)
 
-            # Click final publish button in modal
-            modal.locator('button:has-text("Publish")').first.click(force=True)
-            page.wait_for_timeout(8000)
-        except Exception as modal_err:
-            print(f"  - Category modal fallback click... ({modal_err})", flush=True)
-            page.locator('button:has-text("Publish")').last.click(force=True)
-            page.wait_for_timeout(8000)
+        # 7. Click Final Blue Publish Button inside Modal
+        final_publish_btn = modal.locator('button.ant-btn-primary, button:has-text("Publish")').first
+        final_publish_btn.click(force=True)
+        print("  - Final Publish button clicked inside modal!", flush=True)
+        page.wait_for_timeout(10000)
 
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
 
         print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
         return True
+
     except Exception as e:
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
