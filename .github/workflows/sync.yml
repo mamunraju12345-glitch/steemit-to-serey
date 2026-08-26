@@ -21,14 +21,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Install Playwright browser
-        run: playwright install --with-deps chromium
-
       - name: Run Steemit script
         env:
           STEEM_USERNAME: ${{ secrets.STEEM_USERNAME }}
-          STEEM_POSTING_KEY: ${{ secrets.STEEM_POSTING_KEY }}
           SEREY_USERNAME: ${{ secrets.SEREY_USERNAME }}
-          SEREY_LOGIN: ${{ secrets.SEREY_LOGIN }}
-          SEREY_PASSWORD: ${{ secrets.SEREY_PASSWORD }}
         run: python steemit_to_serey.py
