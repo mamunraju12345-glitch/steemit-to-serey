@@ -141,28 +141,39 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
+        # Setting mobile viewport matching your phone screenshot
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+            viewport={"width": 390, "height": 844},
+            is_mobile=True
         )
         page = context.new_page()
 
         print("\nLogging into Serey.io...")
         try:
-            # Go directly to Serey Login Modal URL
-            page.goto("https://serey.io/login", timeout=60000)
+            page.goto("https://serey.io", timeout=60000)
             page.wait_for_timeout(4000)
 
-            # 1. Fill Username (Exact placeholder: "Username")
-            username_field = page.locator('input[placeholder="Username"]').first
-            username_field.fill(SEREY_LOGIN)
+            # Check if login modal is open, if not click Log in button
+            username_locator = page.locator('input[placeholder="Username"], input[placeholder*="Username"]')
+            
+            if username_locator.count() == 0:
+                print("Clicking Log in button to open modal...")
+                # Click any login button/link on home page
+                page.locator('a[href*="login"], button:has-text("Log in"), a:has-text("Log in"), .nav-btn-space').first.click()
+                page.wait_for_timeout(4000)
 
-            # 2. Fill Password / Private Key (Exact placeholder: "Private Key or Password")
-            password_field = page.locator('input[placeholder="Private Key or Password"]').first
-            password_field.fill(SEREY_PASSWORD)
+            # Wait for Username input field to be visible inside modal
+            page.wait_for_selector('input[placeholder="Username"], input[placeholder*="Username"]', timeout=15000)
 
-            # 3. Click blue "Log in" button
-            login_btn = page.locator('button:has-text("Log in"), button:has-text("Log In")').first
-            login_btn.click()
+            # 1. Fill Username
+            page.locator('input[placeholder="Username"], input[placeholder*="Username"]').first.fill(SEREY_LOGIN)
+
+            # 2. Fill Password / Private Key
+            page.locator('input[placeholder="Private Key or Password"], input[placeholder*="Private Key"]').first.fill(SEREY_PASSWORD)
+
+            # 3. Click blue Log in button inside modal
+            page.locator('.ant-modal-content button:has-text("Log in"), button:has-text("Log in")').last.click()
             page.wait_for_timeout(6000)
             print("✅ Logged into Serey successfully!")
         except Exception as e:
