@@ -109,29 +109,34 @@ def publish_to_serey(page, post):
         # 4. Click First "Publish" Button
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
-        page.wait_for_timeout(3000)
+        
+        # 5. Wait 6 seconds for "Preparing to publish" loading to finish
+        page.wait_for_timeout(6000)
 
-        # 5. Handle Category Modal Popup ("Please choose category")
-        page.wait_for_selector('.ant-modal-content', timeout=10000)
-        modal = page.locator('.ant-modal-content')
+        # Click Category Selector inside modal
+        try:
+            dropdown = page.locator('div:has-text("Select category"), .ant-select, input[placeholder*="category" i]').first
+            dropdown.click(force=True)
+            page.wait_for_timeout(1500)
 
-        # Click Category Selector inside modal (.ant-select-selector)
-        cat_select = modal.locator('.ant-select-selector, .ant-select').first
-        cat_select.click(force=True)
-        page.wait_for_timeout(1500)
-
-        # Select first available option in dropdown (Tech/Crypto/etc)
-        option = page.locator('.ant-select-item-option, .ant-select-dropdown div').first
-        if option.count() > 0:
-            option.click(force=True)
-        else:
+            option = page.locator('.ant-select-item-option, div[title="Tech"], div[title="Crypto"], li').first
+            if option.count() > 0:
+                option.click(force=True)
+            else:
+                page.keyboard.press("ArrowDown")
+                page.keyboard.press("Enter")
+            print("  - Category selected!", flush=True)
+        except Exception as err:
+            print(f"  - Category auto-selecting via keyboard...", flush=True)
+            page.keyboard.press("Tab")
             page.keyboard.press("ArrowDown")
             page.keyboard.press("Enter")
-        print("  - Category selected!", flush=True)
-        page.wait_for_timeout(1500)
+
+        page.wait_for_timeout(2000)
 
         # 6. Click Final "Publish" Button inside Category Modal
-        modal.locator('button:has-text("Publish")').first.click(force=True)
+        final_publish = page.locator('.ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish"), button:has-text("Publish")').last
+        final_publish.click(force=True)
         page.wait_for_timeout(8000)
 
         print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
