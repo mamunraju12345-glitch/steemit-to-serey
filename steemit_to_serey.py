@@ -59,6 +59,11 @@ def load_synced_posts():
         return set()
 
 
+def save_synced_posts(posts):
+    with open(DATA_FILE, "w", encoding="utf-8") as file:
+        json.dump(sorted(posts), file, indent=2, ensure_ascii=False)
+
+
 def get_recent_posts():
     print(f"\nFetching posts from Steemit: @{STEEM_USERNAME}", flush=True)
     result = steem_rpc(
@@ -84,27 +89,55 @@ def get_recent_posts():
 
 
 def publish_to_serey(page, post):
-    print(f"\n---> Inspecting Serey UI for: {post['title']}", flush=True)
+    print(f"\n---> Publishing to Serey: {post['title']}", flush=True)
     try:
-        page.goto("https://serey.io", timeout=60000)
+        # 1. Open exact New Post URL from screenshot
+        page.goto("https://serey.io/blog/post/new", timeout=60000)
         page.wait_for_timeout(4000)
 
-        # Inspect all interactive links and buttons when logged in
-        all_elements = page.locator('a, button').all()
-        print(f"\n--- Found {len(all_elements)} buttons/links on Serey after login ---", flush=True)
-        for idx, el in enumerate(all_elements):
-            try:
-                href = el.get_attribute("href") or ""
-                txt = el.inner_text().strip()
-                cls = el.get_attribute("class") or ""
-                if txt or href:
-                    print(f"Element #{idx+1} -> text='{txt}', href='{href}', class='{cls}'", flush=True)
-            except Exception:
-                pass
+        # 2. Fill Title ("Enter title...")
+        title_box = page.locator('input[placeholder*="title" i], input[placeholder*="Title"]').first
+        title_box.fill(post["title"])
+        print("  - Title filled!", flush=True)
 
-        return False
+        # 3. Fill Body Content ("Enter content...")
+        body_box = page.locator('div[contenteditable="true"], textarea[placeholder*="content" i], textarea').first
+        body_box.fill(post["body"])
+        print("  - Content filled!", flush=True)
+        page.wait_for_timeout(2000)
+
+        # 4. Click First "Publish" Button on right sidebar
+        page.locator('button:has-text("Publish")').first.click(force=True)
+        print("  - First Publish button clicked!", flush=True)
+        page.wait_for_timeout(3000)
+
+        # 5. Handle Category Modal Popup ("Please choose category")
+        modal = page.locator('.ant-modal-content')
+        page.wait_for_selector('.ant-modal-content', timeout=10000)
+
+        # Click Category Dropdown inside modal
+        cat_dropdown = modal.locator('.ant-select, input[placeholder*="Select category" i], div:has-text("Select category")').first
+        cat_dropdown.click(force=True)
+        page.wait_for_timeout(1500)
+
+        # Select a category option (Tech / Creativity)
+        cat_option = page.locator('.ant-select-item-option, div:has-text("Tech"), div:has-text("Creativity"), div:has-text("Society")').first
+        if cat_option.count() > 0:
+            cat_option.click(force=True)
+        else:
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+        print("  - Category selected!", flush=True)
+        page.wait_for_timeout(1500)
+
+        # 6. Click Final "Publish" Button inside Category Modal
+        modal.locator('button:has-text("Publish")').first.click(force=True)
+        page.wait_for_timeout(8000)
+
+        print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
+        return True
     except Exception as e:
-        print(f"❌ Error during inspection: {e}", flush=True)
+        print(f"❌ Failed to publish post on Serey: {e}", flush=True)
         return False
 
 
@@ -159,14 +192,18 @@ def main():
             browser.close()
             return
 
-        # Inspect UI for first new post
-        if new_posts:
-            publish_to_serey(page, new_posts[0])
+        # Publish Each Post
+        for post in new_posts:
+            success = publish_to_serey(page, post)
+            if success:
+                post_id = f'{post["author"]}/{post["permlink"]}'
+                synced_posts.add(post_id)
+                save_synced_posts(synced_posts)
 
         browser.close()
 
     print("\n" + "=" * 60, flush=True)
-    print("INSPECTION COMPLETED", flush=True)
+    print("SYNC COMPLETED SUCCESSFULLY", flush=True)
     print("=" * 60, flush=True)
 
 
