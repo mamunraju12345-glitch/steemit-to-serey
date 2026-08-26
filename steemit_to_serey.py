@@ -59,11 +59,6 @@ def load_synced_posts():
         return set()
 
 
-def save_synced_posts(posts):
-    with open(DATA_FILE, "w", encoding="utf-8") as file:
-        json.dump(sorted(posts), file, indent=2, ensure_ascii=False)
-
-
 def get_recent_posts():
     print(f"\nFetching posts from Steemit: @{STEEM_USERNAME}", flush=True)
     result = steem_rpc(
@@ -89,54 +84,27 @@ def get_recent_posts():
 
 
 def publish_to_serey(page, post):
-    print(f"\n---> Trying to Publish on Serey: {post['title']}", flush=True)
+    print(f"\n---> Inspecting Serey UI for: {post['title']}", flush=True)
     try:
         page.goto("https://serey.io", timeout=60000)
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(4000)
 
-        # Click Write / Post button on Serey navbar
-        create_btn = page.locator('a[href*="create"], a[href*="submit"], a[href*="write"], a[href*="post"], button:has-text("Post"), button:has-text("Write"), .anticon-edit, .anticon-plus, .anticon-form').first
-        if create_btn.count() > 0:
-            create_btn.click(force=True)
-            page.wait_for_timeout(4000)
+        # Inspect all interactive links and buttons when logged in
+        all_elements = page.locator('a, button').all()
+        print(f"\n--- Found {len(all_elements)} buttons/links on Serey after login ---", flush=True)
+        for idx, el in enumerate(all_elements):
+            try:
+                href = el.get_attribute("href") or ""
+                txt = el.inner_text().strip()
+                cls = el.get_attribute("class") or ""
+                if txt or href:
+                    print(f"Element #{idx+1} -> text='{txt}', href='{href}', class='{cls}'", flush=True)
+            except Exception:
+                pass
 
-        all_inputs = page.locator('input, textarea, div[contenteditable="true"]').all()
-        print(f"  - Found {len(all_inputs)} editable fields", flush=True)
-
-        if len(all_inputs) < 2:
-            page.goto("https://serey.io/create-post", timeout=60000)
-            page.wait_for_timeout(4000)
-            all_inputs = page.locator('input, textarea, div[contenteditable="true"]').all()
-
-        if len(all_inputs) < 2:
-            raise RuntimeError(f"Could not locate post editor fields. Found {len(all_inputs)} inputs.")
-
-        # Fill Title (1st editable input)
-        all_inputs[0].fill(post["title"])
-        print("  - Title filled!", flush=True)
-
-        # Fill Tag & Body
-        if len(all_inputs) >= 3:
-            category = post["category"] if post["category"] else "general"
-            all_inputs[1].fill(category)
-            print("  - Category/Tag filled!", flush=True)
-
-            all_inputs[2].fill(post["body"])
-            print("  - Body content filled!", flush=True)
-        else:
-            all_inputs[1].fill(post["body"])
-            print("  - Body content filled!", flush=True)
-
-        page.wait_for_timeout(2000)
-
-        # Click Publish / Submit Button
-        pub_btn = page.locator('button:has-text("Publish"), button:has-text("Post"), button:has-text("Submit"), button.ant-btn-primary').first
-        pub_btn.click(force=True)
-        page.wait_for_timeout(7000)
-        print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
-        return True
+        return False
     except Exception as e:
-        print(f"❌ Failed to publish post on Serey: {e}", flush=True)
+        print(f"❌ Error during inspection: {e}", flush=True)
         return False
 
 
@@ -191,18 +159,14 @@ def main():
             browser.close()
             return
 
-        # Publish Each Post
-        for post in new_posts:
-            success = publish_to_serey(page, post)
-            if success:
-                post_id = f'{post["author"]}/{post["permlink"]}'
-                synced_posts.add(post_id)
-                save_synced_posts(synced_posts)
+        # Inspect UI for first new post
+        if new_posts:
+            publish_to_serey(page, new_posts[0])
 
         browser.close()
 
     print("\n" + "=" * 60, flush=True)
-    print("SYNC COMPLETED SUCCESSFULLY", flush=True)
+    print("INSPECTION COMPLETED", flush=True)
     print("=" * 60, flush=True)
 
 
