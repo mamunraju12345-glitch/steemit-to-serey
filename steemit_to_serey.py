@@ -66,10 +66,8 @@ def save_synced_posts(posts):
 
 
 def extract_image_and_clean_body(body_text, json_metadata_str):
-    """Extract main image for thumbnail & clean raw image links from body"""
     first_image_url = None
 
-    # 1. Try to get main image from json_metadata
     try:
         meta = json.loads(json_metadata_str)
         if isinstance(meta, dict) and "image" in meta and isinstance(meta["image"], list) and meta["image"]:
@@ -77,13 +75,11 @@ def extract_image_and_clean_body(body_text, json_metadata_str):
     except Exception:
         pass
 
-    # 2. Fallback: regex search first image in body
     if not first_image_url:
         img_match = re.search(r'https?://\S+\.(?:png|jpg|jpeg|gif|webp)', body_text, re.IGNORECASE)
         if img_match:
             first_image_url = img_match.group(0)
 
-    # 3. Clean body text (remove markdown images and raw image links)
     clean_body = re.sub(r'!\[.*?\]\(.*?\)', '', body_text)
     clean_body = re.sub(r'https?://\S+\.(?:png|jpg|jpeg|gif|webp)', '', clean_body, flags=re.IGNORECASE)
     clean_body = re.sub(r'\n\s*\n', '\n\n', clean_body).strip()
@@ -92,34 +88,66 @@ def extract_image_and_clean_body(body_text, json_metadata_str):
 
 
 def get_recent_posts():
-    print(f"\nFetching posts from Steemit: @{STEEM_USERNAME}", flush=True)
-    result = steem_rpc(
-        "condenser_api.get_discussions_by_blog",
-        {"tag": STEEM_USERNAME, "limit": 50}
-    )
+    print(f"\nFetching ALL historical posts from Steemit: @{STEEM_USERNAME}", flush=True)
+    all_posts = []
+    seen_permlinks = set()
+    start_author = None
+    start_permlink = None
 
-    posts = []
-    for post in result:
-        if post.get("author") != STEEM_USERNAME:
-            continue
+    while True:
+        params = {"tag": STEEM_USERNAME, "limit": 100}
+        if start_author and start_permlink:
+            params["start_author"] = start_author
+            params["start_permlink"] = start_permlink
 
-        raw_body = post.get("body", "")
-        meta_str = post.get("json_metadata", "{}")
-        image_url, clean_body = extract_image_and_clean_body(raw_body, meta_str)
+        result = steem_rpc("condenser_api.get_discussions_by_blog", params)
+        if not result:
+            break
 
-        posts.append({
-            "author": post.get("author"),
-            "permlink": post.get("permlink"),
-            "title": post.get("title", ""),
-            "body": clean_body,
-            "image": image_url,
-            "category": post.get("category", ""),
-            "created": post.get("created", "")
-        })
+        batch = result[1:] if (start_author and start_permlink) else result
+        if not batch:
+            break
 
-    # Reverse list to process OLDEST posts first (1 year ago to recent)
-    posts.reverse()
-    return posts
+        for post in batch:
+            if post.get("author") != STEEM_USERNAME:
+                continue
+
+            permlink = post.get("permlink")
+            if permlink in seen_permlinks:
+                continue
+            seen_permlinks.add(permlink)
+
+            raw_body = post.get("body", "")
+            meta_str = post.get("json_metadata", "{}")
+            image_url, clean_body = extract_image_and_clean_body(raw_body, meta_str)
+
+            all_posts.append({
+                "author": post.get("author"),
+                "permlink": permlink,
+                "title": post.get("title", ""),
+                "body": clean_body,
+                "image": image_url,
+                "category": post.get("category", ""),
+                "created": post.get("created", "")
+            })
+
+        last_post = result[-1]
+        new_start_author = last_post.get("author")
+        new_start_permlink = last_post.get("permlink")
+
+        if new_start_author == start_author and new_start_permlink == start_permlink:
+            break
+
+        start_author = new_start_author
+        start_permlink = new_start_permlink
+
+        if len(result) < 100 or len(all_posts) >= 1000:
+            break
+
+        time.sleep(0.3)
+
+    all_posts.reverse()
+    return all_posts
 
 
 def publish_to_serey(page, post):
@@ -127,21 +155,20 @@ def publish_to_serey(page, post):
     temp_img_path = "temp_thumbnail.jpg"
     
     try:
-        # 1. Open New Post URL
         page.goto("https://serey.io/blog/post/new", timeout=60000)
         page.wait_for_timeout(4000)
 
-        # 2. Fill Title ("Enter title...")
+        # Title
         title_box = page.locator('input[placeholder*="title" i], input[placeholder*="Title"]').first
         title_box.fill(post["title"])
         print("  - Title filled!", flush=True)
 
-        # 3. Fill Clean Body Content ("Enter content...")
+        # Clean Body
         body_box = page.locator('div[contenteditable="true"], textarea[placeholder*="content" i], textarea').first
         body_box.fill(post["body"])
         print("  - Clean body content filled!", flush=True)
 
-        # 4. Upload Thumbnail Image (If image URL exists)
+        # Upload Thumbnail Image
         if post.get("image"):
             try:
                 print(f"  - Downloading thumbnail image...", flush=True)
@@ -154,41 +181,45 @@ def publish_to_serey(page, post):
                     if file_input.count() > 0:
                         file_input.set_input_files(temp_img_path)
                         print("  - Thumbnail image uploaded!", flush=True)
-                        page.wait_for_timeout(3000)
+                        page.wait_for_timeout(6000)  # Wait for image upload processing
             except Exception as img_err:
                 print(f"  - Thumbnail upload skipped: {img_err}", flush=True)
 
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)
 
-        # 5. Click First "Publish" Button
+        # Click First Publish Button
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
-        page.wait_for_timeout(6000)
+        page.wait_for_timeout(5000)
 
-        # 6. Handle Category Modal Popup ("Please choose category")
-        page.wait_for_selector('.ant-modal-content', timeout=10000)
-        modal = page.locator('.ant-modal-content')
+        # Handle Category Popup Modal
+        try:
+            page.wait_for_selector('.ant-modal-content', timeout=15000)
+            modal = page.locator('.ant-modal-content')
 
-        # Click Category Selector inside modal
-        cat_select = modal.locator('.ant-select-selector, .ant-select').first
-        cat_select.click(force=True)
-        page.wait_for_timeout(1500)
+            # Click category dropdown
+            modal.click(force=True)
+            page.wait_for_timeout(1500)
 
-        # Select first option in dropdown
-        option = page.locator('.ant-select-item-option, .ant-select-dropdown div').first
-        if option.count() > 0:
-            option.click(force=True)
-        else:
-            page.keyboard.press("ArrowDown")
-            page.keyboard.press("Enter")
-        print("  - Category selected!", flush=True)
-        page.wait_for_timeout(1500)
+            # Select category option
+            option = page.locator('.ant-select-item-option, div[title="Tech"], div[title="Crypto"], li').first
+            if option.count() > 0:
+                option.click(force=True)
+            else:
+                page.keyboard.press("Tab")
+                page.keyboard.press("ArrowDown")
+                page.keyboard.press("Enter")
+            print("  - Category selected!", flush=True)
+            page.wait_for_timeout(2000)
 
-        # 7. Click Final "Publish" Button inside Category Modal
-        modal.locator('button:has-text("Publish")').first.click(force=True)
-        page.wait_for_timeout(8000)
+            # Click final publish button in modal
+            modal.locator('button:has-text("Publish")').first.click(force=True)
+            page.wait_for_timeout(8000)
+        except Exception as modal_err:
+            print(f"  - Category modal fallback click... ({modal_err})", flush=True)
+            page.locator('button:has-text("Publish")').last.click(force=True)
+            page.wait_for_timeout(8000)
 
-        # Clean up temp image file
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
 
@@ -215,10 +246,10 @@ def main():
         if post_id not in synced_posts:
             new_posts.append(post)
 
-    print(f"Total posts fetched: {len(posts)}", flush=True)
+    print(f"Total historical posts fetched: {len(posts)}", flush=True)
     print(f"Unsynced posts available: {len(new_posts)}", flush=True)
 
-    # LIMIT TO EXACTLY 1 POST PER RUN
+    # LIMIT TO 1 POST PER RUN
     new_posts_to_run = new_posts[:1]
     print(f"Publishing in this run (Limit = 1): {len(new_posts_to_run)}", flush=True)
 
