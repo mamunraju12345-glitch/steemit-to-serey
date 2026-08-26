@@ -3,7 +3,8 @@ name: Steemit to Serey
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"
+    # বাংলাদেশ সময় প্রতিদিন সকাল ১০:০০ এবং রাত ৭:০০ টায় অটো রান হবে
+    - cron: "0 4,13 * * *"
 
 jobs:
   sync:
