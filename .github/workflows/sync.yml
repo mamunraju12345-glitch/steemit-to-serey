@@ -1,0 +1,28 @@
+name: Steemit to Serey
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Steemit script
+        env:
+          STEEM_USERNAME: ${{ secrets.STEEM_USERNAME }}
+          STEEM_POSTING_KEY: ${{ secrets.STEEM_POSTING_KEY }}
+        run: python steemit_to_serey.py
