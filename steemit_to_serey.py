@@ -140,7 +140,6 @@ def main():
         return
 
     with sync_playwright() as p:
-        # Launch Desktop Browser mode
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             viewport={"width": 1280, "height": 800},
@@ -153,13 +152,13 @@ def main():
             page.goto("https://serey.io", timeout=60000)
             page.wait_for_timeout(4000)
 
-            # Force click the Log in button in Desktop view
-            print("Clicking Log in button on Desktop view...")
-            page.locator('.nav-btn-space, button:has-text("Log in"), a:has-text("Log in")').first.click(force=True)
-            page.wait_for_timeout(4000)
+            # Target the exact "Log in" button directly
+            print("Clicking Log in button on Serey...")
+            page.locator('a:has-text("Log in"), button:has-text("Log in"), a:has-text("Log In"), button:has-text("Log In")').first.click(force=True)
+            page.wait_for_timeout(5000)
 
             # Wait for Username input inside modal
-            page.wait_for_selector('input[placeholder="Username"], input[placeholder*="Username"]', timeout=15000)
+            page.wait_for_selector('input[placeholder="Username"], input[placeholder*="Username"]', timeout=20000)
 
             # 1. Fill Username
             page.locator('input[placeholder="Username"], input[placeholder*="Username"]').first.fill(SEREY_LOGIN)
@@ -168,7 +167,7 @@ def main():
             page.locator('input[placeholder="Private Key or Password"], input[placeholder*="Private Key"]').first.fill(SEREY_PASSWORD)
 
             # 3. Click blue Log in button inside modal
-            page.locator('.ant-modal-content button:has-text("Log in"), button:has-text("Log in")').last.click(force=True)
+            page.locator('.ant-modal-content button:has-text("Log in"), .ant-modal-content button:has-text("Log In"), button:has-text("Log in")').last.click(force=True)
             page.wait_for_timeout(6000)
             print("✅ Logged into Serey successfully!")
         except Exception as e:
