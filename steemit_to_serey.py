@@ -182,46 +182,55 @@ def publish_to_serey(page, post):
                     if file_input.count() > 0:
                         file_input.set_input_files(temp_img_path)
                         print("  - Thumbnail image uploaded!", flush=True)
-                        page.wait_for_timeout(4000)
+                        page.wait_for_timeout(5000)
             except Exception as img_err:
                 print(f"  - Thumbnail upload skipped: {img_err}", flush=True)
 
         page.wait_for_timeout(2000)
 
-        # 5. Click Publish Button
+        # 5. Click First "Publish" Button
         page.locator('button:has-text("Publish")').first.click(force=True)
-        print("  - Publish button clicked!", flush=True)
-        page.wait_for_timeout(4000)
+        print("  - First Publish button clicked!", flush=True)
+        page.wait_for_timeout(5000)
 
-        # 6. Smart Check: Handle Category Modal if present, or continue
-        try:
-            modal = page.locator('.ant-modal-content')
-            if modal.count() > 0 and modal.first.is_visible():
-                print("  - Category modal detected, selecting category...", flush=True)
-                cat_select = modal.locator('.ant-select-selector, .ant-select').first
-                if cat_select.count() > 0:
-                    cat_select.click(force=True)
-                    page.wait_for_timeout(1000)
+        # 6. Handle Category Modal Popup
+        page.wait_for_selector('.ant-modal-content', timeout=20000)
+        modal = page.locator('.ant-modal-content')
+        page.wait_for_timeout(2000)
 
-                    option = page.locator('.ant-select-item-option, div[title="Tech"], div[title="Crypto"], li').first
-                    if option.count() > 0:
-                        option.click(force=True)
-                    else:
-                        page.keyboard.press("ArrowDown")
-                        page.keyboard.press("Enter")
+        # Click Category Selector inside modal
+        cat_select = modal.locator('.ant-select-selector, .ant-select').first
+        cat_select.click(force=True)
+        page.wait_for_timeout(2000)
 
-                page.wait_for_timeout(1000)
-                modal.locator('button.ant-btn-primary, button:has-text("Publish")').first.click(force=True)
-                print("  - Final modal publish clicked!", flush=True)
-        except Exception:
-            print("  - Post published directly without category modal!", flush=True)
+        # Select option
+        option = page.locator('.ant-select-item-option, div[title="Tech"], div[title="Crypto"], li').first
+        if option.count() > 0:
+            option.click(force=True)
+        else:
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+        print("  - Category selected!", flush=True)
+        page.wait_for_timeout(2000)
 
-        page.wait_for_timeout(6000)
+        # 7. Click Final Blue Publish Button inside Modal
+        final_publish_btn = modal.locator('button.ant-btn-primary, button:has-text("Publish")').first
+        final_publish_btn.click(force=True)
+        print("  - Final Publish button clicked inside modal! Waiting for Blockchain broadcast...", flush=True)
+
+        # 8. Wait 15 Seconds for Serey Blockchain Transaction to finish
+        page.wait_for_timeout(15000)
+        current_url = page.url
+        print(f"  - Page URL after posting: {current_url}", flush=True)
+
+        # Check if URL redirected or modal closed
+        if "/blog/post/new" in current_url and page.locator('.ant-modal-content').count() > 0:
+            raise RuntimeError("Post failed: Page did not redirect and Publish modal is still open!")
 
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
 
-        print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
+        print(f"✅ SUCCESSFULLY PUBLISHED & CONFIRMED ON SEREY: {post['title']}", flush=True)
         return True
 
     except Exception as e:
