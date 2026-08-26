@@ -91,7 +91,7 @@ def get_recent_posts():
 def publish_to_serey(page, post):
     print(f"\n---> Publishing to Serey: {post['title']}", flush=True)
     try:
-        # 1. Open exact New Post URL from screenshot
+        # 1. Open New Post URL
         page.goto("https://serey.io/blog/post/new", timeout=60000)
         page.wait_for_timeout(4000)
 
@@ -100,30 +100,30 @@ def publish_to_serey(page, post):
         title_box.fill(post["title"])
         print("  - Title filled!", flush=True)
 
-        # 3. Fill Body Content ("Enter content...")
+        # 3. Fill Content ("Enter content...")
         body_box = page.locator('div[contenteditable="true"], textarea[placeholder*="content" i], textarea').first
         body_box.fill(post["body"])
         print("  - Content filled!", flush=True)
         page.wait_for_timeout(2000)
 
-        # 4. Click First "Publish" Button on right sidebar
+        # 4. Click First "Publish" Button
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
         page.wait_for_timeout(3000)
 
         # 5. Handle Category Modal Popup ("Please choose category")
-        modal = page.locator('.ant-modal-content')
         page.wait_for_selector('.ant-modal-content', timeout=10000)
+        modal = page.locator('.ant-modal-content')
 
-        # Click Category Dropdown inside modal
-        cat_dropdown = modal.locator('.ant-select, input[placeholder*="Select category" i], div:has-text("Select category")').first
-        cat_dropdown.click(force=True)
+        # Click Category Selector inside modal (.ant-select-selector)
+        cat_select = modal.locator('.ant-select-selector, .ant-select').first
+        cat_select.click(force=True)
         page.wait_for_timeout(1500)
 
-        # Select a category option (Tech / Creativity)
-        cat_option = page.locator('.ant-select-item-option, div:has-text("Tech"), div:has-text("Creativity"), div:has-text("Society")').first
-        if cat_option.count() > 0:
-            cat_option.click(force=True)
+        # Select first available option in dropdown (Tech/Crypto/etc)
+        option = page.locator('.ant-select-item-option, .ant-select-dropdown div').first
+        if option.count() > 0:
+            option.click(force=True)
         else:
             page.keyboard.press("ArrowDown")
             page.keyboard.press("Enter")
