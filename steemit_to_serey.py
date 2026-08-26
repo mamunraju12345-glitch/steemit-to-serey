@@ -1,5 +1,6 @@
 import os
 from beem import Steem
+from beem.account import Account
 
 username = os.environ["STEEM_USERNAME"]
 posting_key = os.environ["STEEM_POSTING_KEY"]
@@ -12,7 +13,7 @@ try:
         nodes=["https://api.steemit.com"]
     )
 
-    account = steem.get_account(username)
+    account = Account(username, blockchain_instance=steem)
 
     print("✅ Steemit connection successful!")
     print("Username:", account["name"])
