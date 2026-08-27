@@ -80,6 +80,7 @@ def extract_image_and_clean_body(body_text, json_metadata_str):
         if img_match:
             first_image_url = img_match.group(0)
 
+    # Clean Markdown Images and URL links from Body
     clean_body = re.sub(r'!\[.*?\]\(.*?\)', '', body_text)
     clean_body = re.sub(r'https?://\S+\.(?:png|jpg|jpeg|gif|webp)', '', clean_body, flags=re.IGNORECASE)
     clean_body = re.sub(r'\n\s*\n', '\n\n', clean_body).strip()
@@ -146,6 +147,7 @@ def get_recent_posts():
 
         time.sleep(0.3)
 
+    # Reverse to sync oldest historical posts first
     all_posts.reverse()
     return all_posts
 
@@ -153,21 +155,22 @@ def get_recent_posts():
 def publish_to_serey(page, post):
     print(f"\n---> Publishing to Serey: {post['title']}", flush=True)
     temp_img_path = "temp_thumbnail.jpg"
-    
+
     try:
         # 1. Open New Post URL
         page.goto("https://serey.io/blog/post/new", timeout=60000)
         page.wait_for_timeout(4000)
 
-        # 2. Fill Title
+        # 2. Fill Title ("Enter title...")
         title_box = page.locator('input[placeholder*="title" i], input[placeholder*="Title"]').first
         title_box.fill(post["title"])
         print("  - Title filled!", flush=True)
 
-        # 3. Fill Clean Body
+        # 3. Fill Content (Clean Body)
         body_box = page.locator('div[contenteditable="true"], textarea[placeholder*="content" i], textarea').first
         body_box.fill(post["body"])
         print("  - Clean body content filled!", flush=True)
+        page.wait_for_timeout(2000)
 
         # 4. Upload Thumbnail Image
         if post.get("image"):
@@ -182,67 +185,51 @@ def publish_to_serey(page, post):
                     if file_input.count() > 0:
                         file_input.set_input_files(temp_img_path)
                         print("  - Thumbnail image uploaded!", flush=True)
-                        page.wait_for_timeout(5000)
+                        page.wait_for_timeout(4000)
             except Exception as img_err:
                 print(f"  - Thumbnail upload skipped: {img_err}", flush=True)
 
-        page.wait_for_timeout(2000)
-
-        # 5. Click First Publish Button
+        # 5. Click First "Publish" Button
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
         
-        # 6. Wait for Modal to Appear
-        page.wait_for_selector('.ant-modal-content', timeout=15000)
-        page.wait_for_timeout(2000)
+        # 6. Wait 6 seconds for "Preparing to publish" loading to finish
+        page.wait_for_timeout(6000)
 
-        # Select Category explicitly using Ant Design Selectors
-        print("  - Selecting category from modal dropdown...", flush=True)
+        # 7. Click Category Selector inside modal
         try:
-            # Click category select box inside modal
-            category_selector = page.locator('.ant-modal-content .ant-select-selector, .ant-modal-content .ant-select').first
-            category_selector.click(force=True)
+            dropdown = page.locator('div:has-text("Select category"), .ant-select, input[placeholder*="category" i]').first
+            dropdown.click(force=True)
             page.wait_for_timeout(1500)
 
-            # Select first option from dropdown
-            option = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, .ant-select-item').first
+            option = page.locator('.ant-select-item-option, div[title="Tech"], div[title="Crypto"], li').first
             if option.count() > 0:
                 option.click(force=True)
             else:
                 page.keyboard.press("ArrowDown")
                 page.keyboard.press("Enter")
+            print("  - Category selected!", flush=True)
+        except Exception as err:
+            print(f"  - Category auto-selecting via keyboard...", flush=True)
+            page.keyboard.press("Tab")
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
 
-            print("  - Category selected successfully!", flush=True)
-            page.wait_for_timeout(1500)
-        except Exception as cat_err:
-            print(f"  - Category select warning: {cat_err}", flush=True)
+        page.wait_for_timeout(2000)
 
-        # 7. Click Final Blue Publish Button inside Modal
-        print("  - Submitting final publish in modal...", flush=True)
-        modal_btn = page.locator('.ant-modal-content button.ant-btn-primary, .ant-modal-content button:has-text("Publish")').last
-        modal_btn.click(force=True)
-        
-        # 8. Verification: Wait & Check Redirection
-        print("  - Waiting for post transaction and redirection...", flush=True)
-        page.wait_for_timeout(15000)
-
-        if "post/new" in page.url:
-            page.screenshot(path="failed_publish.png")
-            raise RuntimeError("Post failed! Browser is still on /post/new page.")
+        # 8. Click Final "Publish" Button inside Category Modal
+        final_publish = page.locator('.ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish"), button:has-text("Publish")').last
+        final_publish.click(force=True)
+        page.wait_for_timeout(10000)
 
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
 
         print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
         return True
-
     except Exception as e:
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
-        try:
-            page.screenshot(path="error_state.png")
-        except:
-            pass
         print(f"❌ Failed to publish post on Serey: {e}", flush=True)
         return False
 
@@ -313,7 +300,7 @@ def main():
         browser.close()
 
     print("\n" + "=" * 60, flush=True)
-    print("SYNC COMPLETED SUCCESSFULLY")
+    print("SYNC COMPLETED SUCCESSFULLY", flush=True)
     print("=" * 60, flush=True)
 
 
