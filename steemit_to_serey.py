@@ -6,7 +6,7 @@ import re
 from playwright.sync_api import sync_playwright
 
 STEEM_USERNAME = os.environ["STEEM_USERNAME"]
-SEREY_LOGIN = os.environ.get("SEREY_LOGIN", os.environ.get("SEREY_USERNAME", ""))
+SEREY_LOGIN = os.environ.get("SEREY_LOGIN", os.environ.get("SEREY_USERNAME", "")).replace("@", "").strip()
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "")
 
 STEEM_NODES = [
@@ -159,7 +159,7 @@ def publish_to_serey(page, post):
         page.goto("https://serey.io/blog/post/new", timeout=60000)
         page.wait_for_timeout(4000)
 
-        # 2. Fill Title ("Enter title...")
+        # 2. Fill Title
         title_box = page.locator('input[placeholder*="title" i], input[placeholder*="Title"]').first
         title_box.fill(post["title"])
         print("  - Title filled!", flush=True)
@@ -186,44 +186,59 @@ def publish_to_serey(page, post):
             except Exception as img_err:
                 print(f"  - Thumbnail upload skipped: {img_err}", flush=True)
 
-        # 5. Click First "Publish" Button (গতকাল রাতের অরিজিনাল লজিক)
+        # 5. Click First "Publish" Button
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
-        
-        # 6. Wait 6 seconds for "Preparing to publish" loading to finish
         page.wait_for_timeout(6000)
 
-        # 7. Click Category Selector inside modal (গতকাল রাতের অরিজিনাল লজিক)
+        # 6. Click Category Selector inside modal & Select Option
         try:
-            dropdown = page.locator('div:has-text("Select category"), .ant-select, input[placeholder*="category" i]').first
+            dropdown = page.locator('div:has-text("Select category"), .ant-modal-content .ant-select, input[placeholder*="category" i]').first
             dropdown.click(force=True)
             page.wait_for_timeout(1500)
 
-            option = page.locator('.ant-select-item-option, div[title="Tech"], div[title="Crypto"], li').first
-            if option.count() > 0:
-                option.click(force=True)
-            else:
-                page.keyboard.press("ArrowDown")
-                page.keyboard.press("Enter")
-            print("  - Category selected!", flush=True)
+            # Keyboard navigation to select option
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(500)
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(500)
+            page.keyboard.press("Enter")
+            print("  - Category selected via dropdown!", flush=True)
         except Exception as err:
-            print(f"  - Category auto-selecting via keyboard...", flush=True)
+            print(f"  - Category auto-selecting fallback...", flush=True)
             page.keyboard.press("Tab")
             page.keyboard.press("ArrowDown")
             page.keyboard.press("Enter")
 
         page.wait_for_timeout(2000)
 
-        # 8. Click Final "Publish" Button inside Category Modal
+        # 7. Click Final "Publish" Button inside Category Modal
         final_publish = page.locator('.ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish"), button:has-text("Publish")').last
         final_publish.click(force=True)
-        page.wait_for_timeout(10000)
+        print("  - Final Publish button clicked. Waiting 12s for blockchain broadcast...", flush=True)
+        page.wait_for_timeout(12000)
 
-        if os.path.exists(temp_img_path):
-            os.remove(temp_img_path)
+        # 8. VERIFY ON SEREY PROFILE PAGE (without '@' symbol)
+        profile_url = f"https://serey.io/authors/{SEREY_LOGIN}"
+        print(f"  - Verifying post on profile: {profile_url}", flush=True)
+        page.goto(profile_url, timeout=30000)
+        page.wait_for_timeout(4000)
 
-        print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
-        return True
+        # Check title snippet on profile page
+        short_title = post["title"][:20].strip()
+        page_html = page.content()
+
+        if short_title in page_html:
+            if os.path.exists(temp_img_path):
+                os.remove(temp_img_path)
+            print(f"✅ VERIFIED & CONFIRMED ON PROFILE: {post['title']}", flush=True)
+            return True
+        else:
+            if os.path.exists(temp_img_path):
+                os.remove(temp_img_path)
+            print(f"❌ Post could not be verified on profile page ({profile_url}). Will retry next time.", flush=True)
+            return False
+
     except Exception as e:
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
