@@ -3,7 +3,7 @@ name: Steemit to Serey
 on:
   workflow_dispatch:
   schedule:
-    # বাংলাদেশ সময় প্রতিদিন সকাল ১০:০০ এবং রাত ৭:০০ টায় অটো রান হবে
+    # বাংলাদেশ সময় প্রতিদিন সকাল ১০:০০ এবং রাত ৭:০০ টায় অটো রান হবে (UTC 04:00 & 13:00)
     - cron: "0 4,13 * * *"
 
 jobs:
@@ -31,3 +31,21 @@ jobs:
           SEREY_LOGIN: ${{ secrets.SEREY_LOGIN }}
           SEREY_PASSWORD: ${{ secrets.SEREY_PASSWORD }}
         run: python steemit_to_serey.py
+
+      # ১. নতুন পোস্ট সিঙ্ক হওয়ার পর synced_posts.json ফাইলটি GitHub-এ সেভ (Commit & Push) করবে
+      - name: Commit and Push synced_posts.json
+        if: always()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action Bot"
+          git add synced_posts.json
+          git commit -m "Update synced_posts.json [skip ci]" || echo "No changes to commit"
+          git push
+
+      # ২. কোনো কারণে ফেল করলে স্ক্রিনশট ডাউনলোড করে দেখার অপশন (Debugging step)
+      - name: Upload Error Screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshots
+          path: "*.png"
