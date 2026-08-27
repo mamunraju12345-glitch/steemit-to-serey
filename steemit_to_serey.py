@@ -80,7 +80,6 @@ def extract_image_and_clean_body(body_text, json_metadata_str):
         if img_match:
             first_image_url = img_match.group(0)
 
-    # Clean Markdown Images and URL links from Body
     clean_body = re.sub(r'!\[.*?\]\(.*?\)', '', body_text)
     clean_body = re.sub(r'https?://\S+\.(?:png|jpg|jpeg|gif|webp)', '', clean_body, flags=re.IGNORECASE)
     clean_body = re.sub(r'\n\s*\n', '\n\n', clean_body).strip()
@@ -147,7 +146,6 @@ def get_recent_posts():
 
         time.sleep(0.3)
 
-    # Reverse to sync oldest historical posts first
     all_posts.reverse()
     return all_posts
 
@@ -161,7 +159,7 @@ def publish_to_serey(page, post):
         page.goto("https://serey.io/blog/post/new", timeout=60000)
         page.wait_for_timeout(4000)
 
-        # 2. Fill Title ("Enter title...")
+        # 2. Fill Title
         title_box = page.locator('input[placeholder*="title" i], input[placeholder*="Title"]').first
         title_box.fill(post["title"])
         print("  - Title filled!", flush=True)
@@ -192,13 +190,11 @@ def publish_to_serey(page, post):
         # 5. Click First "Publish" Button
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
-        
-        # 6. Wait 6 seconds for "Preparing to publish" loading to finish
         page.wait_for_timeout(6000)
 
-        # 7. Click Category Selector inside modal
+        # 6. Click Category Selector inside modal
         try:
-            dropdown = page.locator('div:has-text("Select category"), .ant-select, input[placeholder*="category" i]').first
+            dropdown = page.locator('div:has-text("Select category"), .ant-modal-content .ant-select, input[placeholder*="category" i]').first
             dropdown.click(force=True)
             page.wait_for_timeout(1500)
 
@@ -217,16 +213,31 @@ def publish_to_serey(page, post):
 
         page.wait_for_timeout(2000)
 
-        # 8. Click Final "Publish" Button inside Category Modal
-        final_publish = page.locator('.ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish"), button:has-text("Publish")').last
+        # 7. Click Final "Publish" Button inside Category Modal
+        final_publish = page.locator('.ant-modal-content button.ant-btn-primary, .ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish")').last
         final_publish.click(force=True)
-        page.wait_for_timeout(10000)
+        print("  - Final Publish button clicked. Verifying on profile...", flush=True)
+        page.wait_for_timeout(12000)
 
-        if os.path.exists(temp_img_path):
-            os.remove(temp_img_path)
+        # 8. Profile Verification Check
+        profile_url = f"https://serey.io/authors/@{SEREY_LOGIN}"
+        page.goto(profile_url, timeout=30000)
+        page.wait_for_timeout(4000)
 
-        print(f"✅ SUCCESSFULLY PUBLISHED ON SEREY: {post['title']}", flush=True)
-        return True
+        # Verify if title exists on profile page
+        short_title = post["title"][:25].strip()
+        if short_title in page.content():
+            if os.path.exists(temp_img_path):
+                os.remove(temp_img_path)
+            print(f"✅ VERIFIED & PUBLISHED ON SEREY: {post['title']}", flush=True)
+            return True
+        else:
+            page.screenshot(path="verification_failed.png")
+            print(f"❌ Post could not be verified on Serey profile page ({profile_url}).", flush=True)
+            if os.path.exists(temp_img_path):
+                os.remove(temp_img_path)
+            return False
+
     except Exception as e:
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
