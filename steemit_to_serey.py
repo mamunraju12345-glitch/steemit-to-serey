@@ -196,18 +196,22 @@ def publish_to_serey(page, post):
         page.wait_for_selector('.ant-modal-content', timeout=15000)
         page.wait_for_timeout(2000)
 
-        # Select Category via Keyboard Focus
-        print("  - Selecting category from modal...", flush=True)
+        # Select Category explicitly using Ant Design Selectors
+        print("  - Selecting category from modal dropdown...", flush=True)
         try:
-            page.locator('.ant-modal-body').click()
-            page.wait_for_timeout(500)
-            page.keyboard.press("Tab")
-            page.wait_for_timeout(500)
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(1000)
-            page.keyboard.press("ArrowDown")
-            page.wait_for_timeout(500)
-            page.keyboard.press("Enter")
+            # Click category select box inside modal
+            category_selector = page.locator('.ant-modal-content .ant-select-selector, .ant-modal-content .ant-select').first
+            category_selector.click(force=True)
+            page.wait_for_timeout(1500)
+
+            # Select first option from dropdown
+            option = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, .ant-select-item').first
+            if option.count() > 0:
+                option.click(force=True)
+            else:
+                page.keyboard.press("ArrowDown")
+                page.keyboard.press("Enter")
+
             print("  - Category selected successfully!", flush=True)
             page.wait_for_timeout(1500)
         except Exception as cat_err:
@@ -220,7 +224,7 @@ def publish_to_serey(page, post):
         
         # 8. Verification: Wait & Check Redirection
         print("  - Waiting for post transaction and redirection...", flush=True)
-        page.wait_for_timeout(12000)
+        page.wait_for_timeout(15000)
 
         if "post/new" in page.url:
             page.screenshot(path="failed_publish.png")
