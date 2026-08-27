@@ -188,21 +188,25 @@ def publish_to_serey(page, post):
 
         page.wait_for_timeout(2000)
 
-        # 5. Click First Publish Button
+        # 5. Click First Publish Button to Open Modal
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(3000)
 
-        # 6. Select Category inside Modal using Keyboard Automation
-        print("  - Selecting category via keyboard automation...", flush=True)
+        # 6. Select Category inside Modal (Fixed Selector)
+        print("  - Selecting category from dropdown...", flush=True)
         try:
-            page.keyboard.press("Tab")
-            page.wait_for_timeout(500)
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(1000)
-            page.keyboard.press("ArrowDown")
-            page.wait_for_timeout(500)
-            page.keyboard.press("Enter")
+            modal_select = page.locator('.ant-modal-content .ant-select-selector, .ant-modal-content div[class*="select"]').first
+            modal_select.click()
+            page.wait_for_timeout(1500)
+
+            dropdown_option = page.locator('.ant-select-dropdown .ant-select-item-option').first
+            if dropdown_option.is_visible():
+                dropdown_option.click()
+            else:
+                page.keyboard.press("ArrowDown")
+                page.keyboard.press("Enter")
+
             print("  - Category selected successfully!", flush=True)
             page.wait_for_timeout(1500)
         except Exception as cat_err:
@@ -210,11 +214,17 @@ def publish_to_serey(page, post):
 
         # 7. Click Final Blue Publish Button inside Modal
         print("  - Submitting final publish in modal...", flush=True)
-        modal_btn = page.locator('.ant-modal-content button:has-text("Publish"), button:has-text("Publish")').last
-        modal_btn.click(force=True)
+        modal_btn = page.locator('.ant-modal-content button:has-text("Publish")').last
+        modal_btn.wait_for(state="visible", timeout=10000)
+        modal_btn.click()
         
-        # 8. Wait for Blockchain Transaction Broadcast
-        page.wait_for_timeout(15000)
+        # 8. Verification: Wait & Check Redirection
+        print("  - Waiting for post transaction and redirection...", flush=True)
+        page.wait_for_timeout(10000)
+
+        if "post/new" in page.url:
+            page.screenshot(path="failed_publish.png")
+            raise RuntimeError("Post failed! Page did not redirect after clicking publish.")
 
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
@@ -225,6 +235,10 @@ def publish_to_serey(page, post):
     except Exception as e:
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
+        try:
+            page.screenshot(path="error_state.png")
+        except:
+            pass
         print(f"❌ Failed to publish post on Serey: {e}", flush=True)
         return False
 
