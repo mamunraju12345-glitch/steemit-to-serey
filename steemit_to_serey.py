@@ -3,6 +3,7 @@ import json
 import requests
 import time
 import re
+import urllib.parse
 from playwright.sync_api import sync_playwright
 
 
@@ -21,6 +22,8 @@ SEREY_PASSWORD = os.environ.get(
     "SEREY_PASSWORD",
     ""
 ).strip()
+
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "").strip()
 
 STEEM_NODES = [
     "https://api.steemit.com",
@@ -241,7 +244,7 @@ def extract_image_and_clean_body(
 
 
 # ============================================================
-# FETCH ALL STEEM POSTS
+# FETCH ALL STEEM POSTS (ORIGINAL SEQUENCING)
 # ============================================================
 
 def get_recent_posts():
@@ -490,77 +493,89 @@ def get_recent_posts():
 
 
 # ============================================================
-# DOWNLOAD IMAGE
+# PEXELS / AI IMAGE GENERATOR FALLBACK
 # ============================================================
 
-def download_image(image_url):
+def get_fallback_ai_image(title, category=""):
+    clean_query = re.sub(r'[^a-zA-Z0-9\s]', ' ', title).strip()
+    words = [w for w in clean_query.split() if len(w) > 2][:4]
+    search_keyword = " ".join(words) if words else (category if category else "nature blog")
 
-    if not image_url:
-        return None
+    print(f"🤖 Searching AI / Pexels image for: '{search_keyword}'...", flush=True)
 
+    if PEXELS_API_KEY:
+        try:
+            url = f"https://api.pexels.com/v1/search?query={urllib.parse.quote(search_keyword)}&per_page=1"
+            headers = {"Authorization": PEXELS_API_KEY}
+            r = requests.get(url, headers=headers, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("photos") and len(data["photos"]) > 0:
+                    img_url = data["photos"][0]["src"]["large"]
+                    print(f"✅ Found on Pexels: {img_url}", flush=True)
+                    return img_url
+        except Exception as e:
+            print(f"Pexels error: {e}", flush=True)
 
+    # Free AI fallback
     try:
+        ai_prompt = urllib.parse.quote(f"{search_keyword} clean photograph")
+        ai_url = f"https://image.pollinations.ai/prompt/{ai_prompt}?width=1080&height=720&nologo=true"
+        print(f"✅ AI Image generated: {ai_url}", flush=True)
+        return ai_url
+    except Exception as e:
+        print(f"AI fallback error: {e}", flush=True)
 
-        print(
-            f"Downloading image: {image_url}",
-            flush=True
-        )
+    return "https://picsum.photos/1080/720"
 
 
+# ============================================================
+# DOWNLOAD IMAGE (WITH PEXELS / AI FALLBACK)
+# ============================================================
+
+def download_image(image_url, post_title="", category=""):
+
+    # ১. প্রথমে আসল ছবি ডাউনলোড করার চেষ্টা
+    if image_url:
+        try:
+            print(f"Downloading original image: {image_url}", flush=True)
+            response = requests.get(
+                image_url,
+                timeout=15,
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
+            response.raise_for_status()
+
+            content_type = response.headers.get("content-type", "").lower()
+            if "image" in content_type or len(response.content) > 1000:
+                with open(TEMP_IMG_FILE, "wb") as file:
+                    file.write(response.content)
+                print("Image downloaded successfully!", flush=True)
+                return TEMP_IMG_FILE
+            else:
+                print("Original link is not an image. Trying Pexels/AI fallback...", flush=True)
+        except Exception as e:
+            print(f"Original image failed ({e}). Trying Pexels/AI fallback...", flush=True)
+
+    # ২. আসল ছবি ফেইল হলে Pexels / AI ছবি নেওয়া
+    try:
+        fallback_url = get_fallback_ai_image(post_title, category)
+        print(f"Downloading Pexels/AI image: {fallback_url}", flush=True)
         response = requests.get(
-            image_url,
-            timeout=20,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            }
+            fallback_url,
+            timeout=25,
+            headers={"User-Agent": "Mozilla/5.0"}
         )
-
-
         response.raise_for_status()
 
+        with open(TEMP_IMG_FILE, "wb") as file:
+            file.write(response.content)
 
-        content_type = response.headers.get(
-            "content-type",
-            ""
-        ).lower()
-
-
-        if "image" not in content_type:
-
-            print(
-                "URL did not return an image.",
-                flush=True
-            )
-
-            return None
-
-
-        with open(
-            TEMP_IMG_FILE,
-            "wb"
-        ) as file:
-
-            file.write(
-                response.content
-            )
-
-
-        print(
-            "Image downloaded successfully!",
-            flush=True
-        )
-
-
+        print("✅ Pexels/AI image downloaded successfully!", flush=True)
         return TEMP_IMG_FILE
 
-
     except Exception as e:
-
-        print(
-            f"Image download failed: {e}",
-            flush=True
-        )
-
+        print(f"Pexels/AI download failed: {e}", flush=True)
         return None
 
 
@@ -585,6 +600,56 @@ def normalize_text(text):
     )
 
     return text.strip()
+
+
+# ============================================================
+# 100% UPVOTE FUNCTION
+# ============================================================
+
+def give_100_percent_upvote(page):
+    """পোস্টে নিজের অ্যাকাউন্ট থেকে ১০০% আপভোট নিশ্চিত করে"""
+    print("\n👍 GIVING 100% UPVOTE TO PUBLISHED POST...", flush=True)
+    try:
+        page.wait_for_timeout(3000)
+
+        # Serey Vote/Heart/Upvote Button Locator
+        vote_btn = page.locator(
+            'button:has(.anticon-like), '
+            'button:has(.anticon-arrow-up), '
+            'span.anticon-like, '
+            'i.anticon-like, '
+            '.vote-btn, '
+            '.like-btn, '
+            'svg[data-icon="like"], '
+            'svg[data-icon="arrow-up"], '
+            'button:has-text("Upvote"), '
+            'button:has-text("Like")'
+        ).first
+
+        if vote_btn.count() > 0:
+            vote_btn.click(force=True)
+            print("  - Vote button clicked!", flush=True)
+            page.wait_for_timeout(2000)
+
+            # যদি স্লাইডার বা কনফার্মেশন পপআপ আসে
+            confirm_vote = page.locator(
+                '.ant-modal-content button:has-text("Vote"), '
+                '.ant-modal-content button:has-text("Confirm"), '
+                '.ant-modal-footer button:has-text("OK"), '
+                'button:has-text("Confirm Vote")'
+            ).last
+
+            if confirm_vote.count() > 0:
+                confirm_vote.click(force=True)
+                print("  - Confirmed 100% vote in popup!", flush=True)
+
+            page.wait_for_timeout(4000)
+            print("✅ 100% UPVOTE GIVEN SUCCESSFULLY!", flush=True)
+        else:
+            print("⚠️ Upvote button not detected on current screen.", flush=True)
+
+    except Exception as e:
+        print(f"⚠️ Could not complete auto-upvote: {e}", flush=True)
 
 
 # ============================================================
@@ -650,6 +715,8 @@ def verify_serey_post(
                 flush=True
             )
 
+            # পাবলিশ হওয়া পেজেই ১০০% ভোট দেওয়া
+            give_100_percent_upvote(page)
             return True
 
 
@@ -724,6 +791,7 @@ def verify_serey_post(
                     flush=True
                 )
 
+                give_100_percent_upvote(page)
                 return True
 
 
@@ -853,6 +921,7 @@ def verify_serey_post(
                                 flush=True
                             )
 
+                            give_100_percent_upvote(page)
                             return True
 
 
@@ -960,56 +1029,38 @@ def publish_to_serey(
 
 
         # ----------------------------------------------------
-        # IMAGE
+        # IMAGE (AUTO PEXELS / AI FALLBACK)
         # ----------------------------------------------------
 
-        if post.get("image"):
+        try:
+            temp_image = download_image(
+                post.get("image"),
+                post.get("title", ""),
+                post.get("category", "")
+            )
 
-            try:
+            if temp_image and os.path.exists(temp_image):
+                file_input = page.locator(
+                    'input[type="file"]'
+                ).first
 
-                temp_image = download_image(
-                    post["image"]
-                )
-
-
-                if temp_image:
-
-                    file_input = page.locator(
-                        'input[type="file"]'
-                    ).first
-
-
-                    if file_input.count() > 0:
-
-                        file_input.set_input_files(
-                            temp_image
-                        )
-
-
-                        print(
-                            "  - Thumbnail image uploaded!",
-                            flush=True
-                        )
-
-
-                        page.wait_for_timeout(
-                            4000
-                        )
-
-                    else:
-
-                        print(
-                            "  - File input not found.",
-                            flush=True
-                        )
-
-
-            except Exception as e:
-
-                print(
-                    f"  - Thumbnail upload skipped: {e}",
-                    flush=True
-                )
+                if file_input.count() > 0:
+                    file_input.set_input_files(temp_image)
+                    print(
+                        "  - Thumbnail image uploaded!",
+                        flush=True
+                    )
+                    page.wait_for_timeout(4000)
+                else:
+                    print(
+                        "  - File input not found.",
+                        flush=True
+                    )
+        except Exception as e:
+            print(
+                f"  - Thumbnail upload skipped: {e}",
+                flush=True
+            )
 
 
         # ----------------------------------------------------
@@ -1144,7 +1195,7 @@ def publish_to_serey(
 
 
         # ----------------------------------------------------
-        # REAL VERIFICATION
+        # REAL VERIFICATION & 100% UPVOTE
         # ----------------------------------------------------
 
         verified = verify_serey_post(
