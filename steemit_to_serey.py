@@ -6,10 +6,6 @@ import re
 from playwright.sync_api import sync_playwright
 
 
-# ============================================================
-# CONFIG
-# ============================================================
-
 STEEM_USERNAME = os.environ["STEEM_USERNAME"]
 
 SEREY_LOGIN = os.environ.get(
@@ -22,13 +18,6 @@ SEREY_PASSWORD = os.environ.get(
     ""
 ).strip()
 
-DATA_FILE = "synced_posts.json"
-TEMP_IMG_FILE = "temp_thumbnail.jpg"
-
-
-# ============================================================
-# STEEM RPC NODES
-# ============================================================
 
 STEEM_NODES = [
     "https://api.steemit.com",
@@ -42,9 +31,9 @@ STEEM_NODES = [
 ]
 
 
-# ============================================================
-# STEEM RPC
-# ============================================================
+DATA_FILE = "synced_posts.json"
+TEMP_IMG_FILE = "temp_thumbnail.jpg"
+
 
 def steem_rpc(method, params):
 
@@ -104,10 +93,6 @@ def steem_rpc(method, params):
     )
 
 
-# ============================================================
-# SYNCED POSTS
-# ============================================================
-
 def load_synced_posts():
 
     if not os.path.exists(DATA_FILE):
@@ -128,8 +113,6 @@ def load_synced_posts():
 
             return set(data)
 
-        return set()
-
     except Exception as e:
 
         print(
@@ -137,7 +120,7 @@ def load_synced_posts():
             flush=True
         )
 
-        return set()
+    return set()
 
 
 def save_synced_posts(posts):
@@ -156,10 +139,6 @@ def save_synced_posts(posts):
         )
 
 
-# ============================================================
-# IMAGE + BODY CLEANING
-# ============================================================
-
 def extract_image_and_clean_body(
     body_text,
     json_metadata_str
@@ -167,10 +146,6 @@ def extract_image_and_clean_body(
 
     first_image_url = None
 
-
-    # --------------------------------------------------------
-    # JSON METADATA IMAGE
-    # --------------------------------------------------------
 
     try:
 
@@ -198,10 +173,6 @@ def extract_image_and_clean_body(
         pass
 
 
-    # --------------------------------------------------------
-    # MARKDOWN IMAGE
-    # --------------------------------------------------------
-
     if not first_image_url:
 
         markdown_img = re.search(
@@ -216,10 +187,6 @@ def extract_image_and_clean_body(
                 markdown_img.group(1)
             )
 
-
-    # --------------------------------------------------------
-    # NORMAL IMAGE URL
-    # --------------------------------------------------------
 
     if not first_image_url:
 
@@ -236,14 +203,9 @@ def extract_image_and_clean_body(
             )
 
 
-    # --------------------------------------------------------
-    # CLEAN BODY
-    # --------------------------------------------------------
-
     clean_body = body_text
 
 
-    # Remove Markdown images
     clean_body = re.sub(
         r'!\[[^\]]*\]\([^)]+\)',
         '',
@@ -251,7 +213,6 @@ def extract_image_and_clean_body(
     )
 
 
-    # Remove image URLs
     clean_body = re.sub(
         r'https?://[^\s<>"\']+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s<>"\']*)?',
         '',
@@ -260,7 +221,6 @@ def extract_image_and_clean_body(
     )
 
 
-    # Remove excessive blank lines
     clean_body = re.sub(
         r'\n\s*\n\s*\n+',
         '\n\n',
@@ -274,10 +234,6 @@ def extract_image_and_clean_body(
     return first_image_url, clean_body
 
 
-# ============================================================
-# GET ALL STEEM POSTS
-# ============================================================
-
 def get_recent_posts():
 
     print(
@@ -289,10 +245,13 @@ def get_recent_posts():
 
     all_posts = []
 
-    seen_permlinks = set()
+    seen_ids = set()
 
     start_author = None
+
     start_permlink = None
+
+    page_number = 0
 
 
     while True:
@@ -314,8 +273,11 @@ def get_recent_posts():
             )
 
 
+        page_number += 1
+
+
         print(
-            "Fetching Steemit batch...",
+            f"Fetching Steemit batch #{page_number}...",
             flush=True
         )
 
@@ -328,10 +290,14 @@ def get_recent_posts():
 
         if not result:
 
+            print(
+                "No more Steemit results.",
+                flush=True
+            )
+
             break
 
 
-        # Remove boundary duplicate
         if start_author and start_permlink:
 
             batch = result[1:]
@@ -346,15 +312,27 @@ def get_recent_posts():
             break
 
 
+        added_this_batch = 0
+
+
         for post in batch:
 
-            if post.get("author") != STEEM_USERNAME:
+            if post.get(
+                "author"
+            ) != STEEM_USERNAME:
 
                 continue
 
 
+            author = post.get(
+                "author",
+                ""
+            )
+
+
             permlink = post.get(
-                "permlink"
+                "permlink",
+                ""
             )
 
 
@@ -363,13 +341,18 @@ def get_recent_posts():
                 continue
 
 
-            if permlink in seen_permlinks:
+            post_id = (
+                f"{author}/{permlink}"
+            )
+
+
+            if post_id in seen_ids:
 
                 continue
 
 
-            seen_permlinks.add(
-                permlink
+            seen_ids.add(
+                post_id
             )
 
 
@@ -395,10 +378,7 @@ def get_recent_posts():
 
             all_posts.append({
 
-                "author": post.get(
-                    "author",
-                    ""
-                ),
+                "author": author,
 
                 "permlink": permlink,
 
@@ -420,7 +400,20 @@ def get_recent_posts():
                     "created",
                     ""
                 )
+
             })
+
+
+            added_this_batch += 1
+
+
+        print(
+            f"Batch #{page_number}: "
+            f"{len(result)} received, "
+            f"{added_this_batch} new posts. "
+            f"Total: {len(all_posts)}",
+            flush=True
+        )
 
 
         last_post = result[-1]
@@ -442,19 +435,40 @@ def get_recent_posts():
             new_start_permlink == start_permlink
         ):
 
+            print(
+                "Pagination boundary repeated. "
+                "Stopping safely.",
+                flush=True
+            )
+
             break
 
 
-        start_author = new_start_author
+        if added_this_batch == 0:
 
-        start_permlink = new_start_permlink
+            print(
+                "No new posts in this batch. "
+                "Stopping safely.",
+                flush=True
+            )
+
+            break
 
 
-        # Safety limit
+        start_author = (
+            new_start_author
+        )
+
+
+        start_permlink = (
+            new_start_permlink
+        )
+
+
         if len(all_posts) >= 5000:
 
             print(
-                "Reached 5000 post safety limit.",
+                "Reached 5000-post safety limit.",
                 flush=True
             )
 
@@ -463,13 +477,18 @@ def get_recent_posts():
 
         if len(result) < 100:
 
+            print(
+                "Last batch has fewer than "
+                "100 results.",
+                flush=True
+            )
+
             break
 
 
         time.sleep(0.3)
 
 
-    # Oldest post first
     all_posts.reverse()
 
 
@@ -482,10 +501,6 @@ def get_recent_posts():
 
     return all_posts
 
-
-# ============================================================
-# DOWNLOAD IMAGE
-# ============================================================
 
 def download_image(image_url):
 
@@ -559,46 +574,41 @@ def download_image(image_url):
         return None
 
 
-# ============================================================
-# PART 2 WILL CONTINUE HERE
-# ============================================================
-# ============================================================
-# PUBLISH TO SEREY
-# ============================================================
-
-def publish_to_serey(page, post):
+def publish_to_serey(
+    page,
+    post
+):
 
     print(
-        f"\n---> Publishing to Serey: {post['title']}",
+        f"\n---> Publishing to Serey: "
+        f"{post['title']}",
         flush=True
     )
 
-    try:
 
-        # ----------------------------------------------------
-        # 1. OPEN NEW POST PAGE
-        # ----------------------------------------------------
+    try:
 
         page.goto(
             "https://serey.io/blog/post/new",
             timeout=60000
         )
 
-        page.wait_for_timeout(4000)
 
+        page.wait_for_timeout(
+            4000
+        )
 
-        # ----------------------------------------------------
-        # 2. FILL TITLE
-        # ----------------------------------------------------
 
         title_box = page.locator(
             'input[placeholder*="title" i], '
             'input[placeholder*="Title"]'
         ).first
 
+
         title_box.fill(
             post["title"]
         )
+
 
         print(
             "  - Title filled!",
@@ -606,31 +616,28 @@ def publish_to_serey(page, post):
         )
 
 
-        # ----------------------------------------------------
-        # 3. FILL CLEAN BODY
-        # ----------------------------------------------------
-
         body_box = page.locator(
             'div[contenteditable="true"], '
             'textarea[placeholder*="content" i], '
             'textarea'
         ).first
 
+
         body_box.fill(
             post["body"]
         )
+
 
         print(
             "  - Clean body content filled!",
             flush=True
         )
 
-        page.wait_for_timeout(2000)
 
+        page.wait_for_timeout(
+            2000
+        )
 
-        # ----------------------------------------------------
-        # 4. UPLOAD THUMBNAIL
-        # ----------------------------------------------------
 
         if post.get("image"):
 
@@ -640,11 +647,13 @@ def publish_to_serey(page, post):
                     post["image"]
                 )
 
+
                 if temp_image:
 
                     file_input = page.locator(
                         'input[type="file"]'
                     ).first
+
 
                     if file_input.count() > 0:
 
@@ -652,10 +661,12 @@ def publish_to_serey(page, post):
                             temp_image
                         )
 
+
                         print(
                             "  - Thumbnail image uploaded!",
                             flush=True
                         )
+
 
                         page.wait_for_timeout(
                             4000
@@ -669,6 +680,7 @@ def publish_to_serey(page, post):
                             flush=True
                         )
 
+
             except Exception as image_error:
 
                 print(
@@ -678,15 +690,12 @@ def publish_to_serey(page, post):
                 )
 
 
-        # ----------------------------------------------------
-        # 5. FIRST PUBLISH BUTTON
-        # ----------------------------------------------------
-
         page.locator(
             'button:has-text("Publish")'
         ).first.click(
             force=True
         )
+
 
         print(
             "  - First Publish button clicked!",
@@ -694,17 +703,10 @@ def publish_to_serey(page, post):
         )
 
 
-        # IMPORTANT:
-        # Same waiting time as your working second code.
-
         page.wait_for_timeout(
             6000
         )
 
-
-        # ----------------------------------------------------
-        # 6. SELECT CATEGORY
-        # ----------------------------------------------------
 
         try:
 
@@ -769,9 +771,11 @@ def publish_to_serey(page, post):
                 "Tab"
             )
 
+
             page.keyboard.press(
                 "ArrowDown"
             )
+
 
             page.keyboard.press(
                 "Enter"
@@ -782,10 +786,6 @@ def publish_to_serey(page, post):
             2000
         )
 
-
-        # ----------------------------------------------------
-        # 7. FINAL PUBLISH
-        # ----------------------------------------------------
 
         final_publish = page.locator(
             '.ant-modal-content button:has-text("Publish"), '
@@ -804,8 +804,6 @@ def publish_to_serey(page, post):
             flush=True
         )
 
-
-        # Wait for Serey blockchain broadcast
 
         page.wait_for_timeout(
             10000
@@ -829,12 +827,11 @@ def publish_to_serey(page, post):
             flush=True
         )
 
+
         return False
 
 
     finally:
-
-        # Remove temporary image
 
         if os.path.exists(
             TEMP_IMG_FILE
@@ -847,12 +844,9 @@ def publish_to_serey(page, post):
                 )
 
             except Exception:
+
                 pass
 
-
-# ============================================================
-# MAIN
-# ============================================================
 
 def main():
 
@@ -861,10 +855,12 @@ def main():
         flush=True
     )
 
+
     print(
         "       STEEMIT -> SEREY AUTOMATION",
         flush=True
     )
+
 
     print(
         "=" * 60,
@@ -872,11 +868,9 @@ def main():
     )
 
 
-    # --------------------------------------------------------
-    # LOAD SYNCED POSTS
-    # --------------------------------------------------------
-
-    synced_posts = load_synced_posts()
+    synced_posts = (
+        load_synced_posts()
+    )
 
 
     print(
@@ -886,16 +880,8 @@ def main():
     )
 
 
-    # --------------------------------------------------------
-    # FETCH ALL STEEMIT POSTS
-    # --------------------------------------------------------
-
     posts = get_recent_posts()
 
-
-    # --------------------------------------------------------
-    # FIND UNSYNCED POSTS
-    # --------------------------------------------------------
 
     new_posts = []
 
@@ -916,7 +902,7 @@ def main():
 
 
     print(
-        f"Total posts fetched: "
+        f"Total historical posts fetched: "
         f"{len(posts)}",
         flush=True
     )
@@ -929,16 +915,18 @@ def main():
     )
 
 
-    # --------------------------------------------------------
-    # ONLY 1 POST PER RUN
-    # --------------------------------------------------------
+    # IMPORTANT:
+    # Only ONE post per GitHub Actions run.
 
-    new_posts_to_run = new_posts[:1]
+    new_posts_to_run = (
+        new_posts[:1]
+    )
 
 
     print(
-        f"Publishing this run: "
-        f"{len(new_posts_to_run)} post",
+        f"Publishing in this run "
+        f"(Limit = 1): "
+        f"{len(new_posts_to_run)}",
         flush=True
     )
 
@@ -952,10 +940,6 @@ def main():
 
         return
 
-
-    # --------------------------------------------------------
-    # START PLAYWRIGHT
-    # --------------------------------------------------------
 
     with sync_playwright() as p:
 
@@ -984,10 +968,6 @@ def main():
 
         page = context.new_page()
 
-
-        # ----------------------------------------------------
-        # SEREY LOGIN
-        # ----------------------------------------------------
 
         print(
             "\nLogging into Serey.io...",
@@ -1116,7 +1096,8 @@ def main():
 
 
                 print(
-                    f"Saved as synced: {post_id}",
+                    f"Saved as synced: "
+                    f"{post_id}",
                     flush=True
                 )
 
@@ -1125,7 +1106,8 @@ def main():
 
                 print(
                     "Publishing failed. "
-                    "Post was NOT saved to synced_posts.json.",
+                    "Post was NOT saved "
+                    "to synced_posts.json.",
                     flush=True
                 )
 
@@ -1150,10 +1132,6 @@ def main():
         flush=True
     )
 
-
-# ============================================================
-# RUN
-# ============================================================
 
 if __name__ == "__main__":
 
