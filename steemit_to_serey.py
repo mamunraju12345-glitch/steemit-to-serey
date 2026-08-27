@@ -1104,35 +1104,32 @@ def publish_to_serey(
 
 
         # ----------------------------------------------------
-        # CATEGORY
+        # CATEGORY (FIXED: PROPER SELECTION)
         # ----------------------------------------------------
 
         try:
 
             dropdown = page.locator(
+                '.ant-select-selector, '
                 'div:has-text("Select category"), '
-                '.ant-select, '
                 'input[placeholder*="category" i]'
             ).first
-
 
             dropdown.click(
                 force=True
             )
 
-
             page.wait_for_timeout(
-                1500
+                2000
             )
 
-
             option = page.locator(
+                '.ant-select-item-option-content, '
                 '.ant-select-item-option, '
                 'div[title="Tech"], '
                 'div[title="Crypto"], '
                 'li'
             ).first
-
 
             if option.count() > 0:
 
@@ -1150,21 +1147,17 @@ def publish_to_serey(
                     "Enter"
                 )
 
-
             print(
-                "  - Category selected!",
+                "  - Category selected successfully!",
                 flush=True
             )
 
-
-        except Exception:
+        except Exception as e:
 
             print(
-                "  - Category auto-selecting "
-                "via keyboard...",
+                f"  - Category selection fallback: {e}",
                 flush=True
             )
-
 
             page.keyboard.press(
                 "Tab"
@@ -1208,7 +1201,7 @@ def publish_to_serey(
 
         # Give Serey enough time
         page.wait_for_timeout(
-            12000
+            15000
         )
 
 
@@ -1230,7 +1223,7 @@ def publish_to_serey(
                 flush=True
             )
 
-            # ভোট প্রয়োগ
+            # ভোট দেওয়া
             cast_100_percent_vote(page)
 
             return True
