@@ -501,8 +501,10 @@ def get_recent_posts():
 
 def download_image(image_url, post_title=""):
 
+    # ১. প্রথমে মূল ইমেজ ডাউনলোড করার চেষ্টা
     if image_url:
         try:
+
             print(
                 f"Downloading image: {image_url}",
                 flush=True
@@ -524,10 +526,12 @@ def download_image(image_url, post_title=""):
             ).lower()
 
             if "image" in content_type or len(response.content) > 1000:
+
                 with open(
                     TEMP_IMG_FILE,
                     "wb"
                 ) as file:
+
                     file.write(
                         response.content
                     )
@@ -540,11 +544,13 @@ def download_image(image_url, post_title=""):
                 return TEMP_IMG_FILE
 
         except Exception as e:
+
             print(
-                f"Image download failed: {e}. Trying Pexels/AI fallback...",
+                f"Image download failed: {e}. Trying Pexels fallback...",
                 flush=True
             )
 
+    # ২. মূল ইমেজ না পেলে বা ফেইল হলে Pexels / AI ছবি নেওয়া
     try:
         clean_query = re.sub(r'[^a-zA-Z0-9\s]', ' ', post_title).strip()
         words = [w for w in clean_query.split() if len(w) > 2][:3]
@@ -652,7 +658,7 @@ def cast_100_percent_vote(page):
 
 
 # ============================================================
-# VERIFY SEREY POST (HUBAHU ORIGINAL)
+# VERIFY SEREY POST
 # ============================================================
 
 def verify_serey_post(
@@ -1224,6 +1230,7 @@ def publish_to_serey(
                 flush=True
             )
 
+            # ভোট প্রয়োগ
             cast_100_percent_vote(page)
 
             return True
