@@ -3,15 +3,14 @@ import json
 import requests
 import time
 import re
-from urllib.parse import urljoin, urlparse
 from playwright.sync_api import sync_playwright
 
 
 # ============================================================
-# CONFIGURATION
+# SETTINGS
 # ============================================================
 
-STEEM_USERNAME = os.environ["STEEM_USERNAME"].strip()
+STEEM_USERNAME = os.environ["STEEM_USERNAME"]
 
 SEREY_LOGIN = os.environ.get(
     "SEREY_LOGIN",
@@ -22,39 +21,6 @@ SEREY_PASSWORD = os.environ.get(
     "SEREY_PASSWORD",
     ""
 ).strip()
-
-PEXELS_API_KEY = os.environ.get(
-    "PEXELS_API_KEY",
-    ""
-).strip()
-
-DATA_FILE = "synced_posts.json"
-
-# প্রতি GitHub Actions run-এ কতটি post publish করবে
-POSTS_PER_RUN = 1
-
-# সর্বোচ্চ historical posts
-MAX_POSTS = 6000
-
-# সর্বোচ্চ Steem batches
-MAX_BATCHES = 100
-
-# Serey publish হওয়ার পর কতবার verification করবে
-VERIFY_ATTEMPTS = 10
-
-# দুই verification-এর মাঝে কত সেকেন্ড অপেক্ষা করবে
-VERIFY_WAIT_SECONDS = 10
-
-# Temporary image
-TEMP_IMG_FILE = "temp_thumbnail.jpg"
-
-# Serey
-SEREY_BASE = "https://serey.io"
-
-
-# ============================================================
-# STEEM RPC NODES
-# ============================================================
 
 STEEM_NODES = [
     "https://api.steemit.com",
@@ -67,29 +33,11 @@ STEEM_NODES = [
     "https://api.steemitdev.com",
 ]
 
+DATA_FILE = "synced_posts.json"
+TEMP_IMG_FILE = "temp_thumbnail.jpg"
 
-# ============================================================
-# COMMON HEADERS
-# ============================================================
-
-BROWSER_USER_AGENT = (
-    "Mozilla/5.0 "
-    "(Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 "
-    "(KHTML, like Gecko) "
-    "Chrome/122.0.0.0 "
-    "Safari/537.36"
-)
-
-
-IMAGE_HEADERS = {
-    "User-Agent": BROWSER_USER_AGENT,
-    "Accept": (
-        "image/avif,image/webp,image/apng,"
-        "image/svg+xml,image/*,*/*;q=0.8"
-    ),
-    "Referer": "https://steemit.com/",
-}
+# প্রতি GitHub Actions run-এ কয়টি পোস্ট publish করবে
+POSTS_PER_RUN = 1
 
 
 # ============================================================
@@ -122,7 +70,7 @@ def steem_rpc(method, params):
                 headers={
                     "Content-Type": "application/json"
                 },
-                timeout=30
+                timeout=20
             )
 
             response.raise_for_status()
@@ -130,7 +78,6 @@ def steem_rpc(method, params):
             data = response.json()
 
             if "error" in data:
-
                 raise RuntimeError(
                     str(data["error"])
                 )
@@ -142,7 +89,7 @@ def steem_rpc(method, params):
             last_error = e
 
             print(
-                f"Steem RPC failed: {node} -> {e}",
+                f"RPC failed: {node} -> {e}",
                 flush=True
             )
 
@@ -161,13 +108,6 @@ def steem_rpc(method, params):
 def load_synced_posts():
 
     if not os.path.exists(DATA_FILE):
-
-        print(
-            "synced_posts.json not found. "
-            "Starting with empty sync database.",
-            flush=True
-        )
-
         return set()
 
     try:
@@ -176,21 +116,12 @@ def load_synced_posts():
             DATA_FILE,
             "r",
             encoding="utf-8"
-        ) as f:
+        ) as file:
 
-            data = json.load(f)
+            data = json.load(file)
 
         if isinstance(data, list):
-
-            return set(
-                str(x)
-                for x in data
-            )
-
-        print(
-            "synced_posts.json format is invalid.",
-            flush=True
-        )
+            return set(data)
 
     except Exception as e:
 
@@ -204,251 +135,22 @@ def load_synced_posts():
 
 def save_synced_posts(posts):
 
-    try:
+    with open(
+        DATA_FILE,
+        "w",
+        encoding="utf-8"
+    ) as file:
 
-        with open(
-            DATA_FILE,
-            "w",
-            encoding="utf-8"
-        ) as f:
-
-            json.dump(
-                sorted(posts),
-                f,
-                indent=2,
-                ensure_ascii=False
-            )
-
-        print(
-            f"Saved synced_posts.json "
-            f"({len(posts)} posts)",
-            flush=True
+        json.dump(
+            sorted(posts),
+            file,
+            indent=2,
+            ensure_ascii=False
         )
-
-        return True
-
-    except Exception as e:
-
-        print(
-            f"Could not save synced_posts.json: {e}",
-            flush=True
-        )
-
-        return False
 
 
 # ============================================================
-# URL HELPERS
-# ============================================================
-
-def clean_url(url):
-
-    if not url:
-
-        return None
-
-    url = str(url).strip()
-
-    url = url.rstrip(
-        ".,;:!?)]}\"'"
-    )
-
-    if url.startswith("//"):
-
-        url = "https:" + url
-
-    return url
-
-
-def is_image_url(url):
-
-    if not url:
-
-        return False
-
-    url = url.lower().strip()
-
-    if url.startswith("//"):
-
-        url = "https:" + url
-
-    known_hosts = [
-
-        "steemitimages.com",
-        "cdn.steemitimages.com",
-        "images.steemitimages.com",
-
-        "img.esteem.ws",
-
-        "images.pexels.com",
-
-        "i67.tinypic.com",
-        "tinypic.com",
-
-        "imgur.com",
-        "i.imgur.com",
-
-        "ipfs.io",
-        "gateway.pinata.cloud"
-
-    ]
-
-    for host in known_hosts:
-
-        if host in url:
-
-            return True
-
-    if re.search(
-        r"\.(jpg|jpeg|png|gif|webp|bmp)(\?.*)?$",
-        url,
-        re.IGNORECASE
-    ):
-
-        return True
-
-    return False
-
-
-# ============================================================
-# IMAGE EXTRACTION
-# ============================================================
-
-def extract_all_images(
-    body,
-    metadata
-):
-
-    images = []
-
-    # --------------------------------------------------------
-    # JSON metadata
-    # --------------------------------------------------------
-
-    try:
-
-        if isinstance(
-            metadata,
-            str
-        ):
-
-            meta = json.loads(
-                metadata
-            )
-
-        elif isinstance(
-            metadata,
-            dict
-        ):
-
-            meta = metadata
-
-        else:
-
-            meta = {}
-
-        if isinstance(
-            meta,
-            dict
-        ):
-
-            meta_images = meta.get(
-                "image",
-                []
-            )
-
-            if isinstance(
-                meta_images,
-                list
-            ):
-
-                for img in meta_images:
-
-                    if not isinstance(
-                        img,
-                        str
-                    ):
-
-                        continue
-
-                    img = clean_url(
-                        img
-                    )
-
-                    if (
-                        img
-                        and
-                        img not in images
-                    ):
-
-                        images.append(
-                            img
-                        )
-
-    except Exception as e:
-
-        print(
-            f"Metadata image extraction warning: {e}",
-            flush=True
-        )
-
-    # --------------------------------------------------------
-    # Markdown images
-    # --------------------------------------------------------
-
-    markdown_images = re.findall(
-        r'!\[[^\]]*\]\((https?://[^)\s]+)\)',
-        body or "",
-        re.IGNORECASE
-    )
-
-    for img in markdown_images:
-
-        img = clean_url(
-            img
-        )
-
-        if (
-            img
-            and
-            img not in images
-        ):
-
-            images.append(
-                img
-            )
-
-    # --------------------------------------------------------
-    # Raw image URLs
-    # --------------------------------------------------------
-
-    raw_urls = re.findall(
-        r'https?://[^\s<>"\']+',
-        body or "",
-        re.IGNORECASE
-    )
-
-    for url in raw_urls:
-
-        url = clean_url(
-            url
-        )
-
-        if (
-            is_image_url(url)
-            and
-            url not in images
-        ):
-
-            images.append(
-                url
-            )
-
-    return images
-
-
-# ============================================================
-# CLEAN BODY
+# IMAGE + BODY CLEANING
 # ============================================================
 
 def extract_image_and_clean_body(
@@ -456,51 +158,84 @@ def extract_image_and_clean_body(
     json_metadata_str
 ):
 
-    body_text = body_text or ""
+    first_image_url = None
 
-    images = extract_all_images(
-        body_text,
-        json_metadata_str
-    )
+    try:
 
-    first_image = (
-        images[0]
-        if images
-        else None
-    )
+        meta = json.loads(
+            json_metadata_str
+        )
+
+        if (
+            isinstance(meta, dict)
+            and
+            isinstance(
+                meta.get("image"),
+                list
+            )
+            and
+            meta["image"]
+        ):
+
+            first_image_url = (
+                meta["image"][0]
+            )
+
+    except Exception:
+        pass
+
+
+    if not first_image_url:
+
+        match = re.search(
+            r'!\[[^\]]*\]\((https?://[^)\s]+)\)',
+            body_text,
+            re.IGNORECASE
+        )
+
+        if match:
+            first_image_url = match.group(1)
+
+
+    if not first_image_url:
+
+        match = re.search(
+            r'https?://[^\s<>"\']+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s<>"\']*)?',
+            body_text,
+            re.IGNORECASE
+        )
+
+        if match:
+            first_image_url = match.group(0)
+
 
     clean_body = body_text
 
-    # Remove markdown images
+
     clean_body = re.sub(
         r'!\[[^\]]*\]\([^)]+\)',
         '',
         clean_body
     )
 
-    # Remove image URLs
-    body_images = extract_all_images(
-        body_text,
-        "{}"
+
+    clean_body = re.sub(
+        r'https?://[^\s<>"\']+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s<>"\']*)?',
+        '',
+        clean_body,
+        flags=re.IGNORECASE
     )
 
-    for url in body_images:
 
-        clean_body = clean_body.replace(
-            url,
-            ""
-        )
-
-    # Remove excessive blank lines
     clean_body = re.sub(
-        r'\n[ \t]*\n[ \t]*\n+',
+        r'\n\s*\n\s*\n+',
         '\n\n',
         clean_body
     )
 
+
     return (
-        first_image,
-        images,
+        first_image_url,
         clean_body.strip()
     )
 
@@ -512,79 +247,61 @@ def extract_image_and_clean_body(
 def get_recent_posts():
 
     print(
-        f"\nFetching ALL historical posts from "
-        f"Steemit: @{STEEM_USERNAME}",
+        f"\nFetching ALL historical posts "
+        f"from Steemit: @{STEEM_USERNAME}",
         flush=True
     )
 
     all_posts = []
 
-    seen_posts = set()
+    seen_ids = set()
 
     start_author = None
     start_permlink = None
 
-    batch_number = 0
+    page_number = 0
 
-    while batch_number < MAX_BATCHES:
 
-        batch_number += 1
-
-        print(
-            f"Fetching Steemit batch #{batch_number}...",
-            flush=True
-        )
+    while True:
 
         params = {
             "tag": STEEM_USERNAME,
             "limit": 100
         }
 
-        if (
-            start_author
-            and
-            start_permlink
-        ):
 
-            params["start_author"] = (
-                start_author
-            )
+        if start_author and start_permlink:
 
-            params["start_permlink"] = (
-                start_permlink
-            )
+            params["start_author"] = start_author
+            params["start_permlink"] = start_permlink
 
-        try:
 
-            result = steem_rpc(
-                "condenser_api.get_discussions_by_blog",
-                params
-            )
+        page_number += 1
 
-        except Exception as e:
 
-            print(
-                f"Failed to fetch batch "
-                f"#{batch_number}: {e}",
-                flush=True
-            )
+        print(
+            f"Fetching Steemit batch #{page_number}...",
+            flush=True
+        )
 
-            break
+
+        result = steem_rpc(
+            "condenser_api.get_discussions_by_blog",
+            params
+        )
+
 
         if not result:
 
             print(
-                "No more Steemit posts.",
+                "No more results.",
                 flush=True
             )
 
             break
 
-        if (
-            start_author
-            and
-            start_permlink
-        ):
+
+        if start_author and start_permlink:
 
             batch = result[1:]
 
@@ -592,24 +309,19 @@ def get_recent_posts():
 
             batch = result
 
+
         if not batch:
-
-            print(
-                "No new posts in this batch.",
-                flush=True
-            )
-
             break
 
-        added = 0
+
+        added_this_batch = 0
+
 
         for post in batch:
 
-            if post.get(
-                "author"
-            ) != STEEM_USERNAME:
-
+            if post.get("author") != STEEM_USERNAME:
                 continue
+
 
             author = post.get(
                 "author",
@@ -621,40 +333,42 @@ def get_recent_posts():
                 ""
             )
 
-            if not permlink:
 
+            if not permlink:
                 continue
+
 
             post_id = (
                 f"{author}/{permlink}"
             )
 
-            if post_id in seen_posts:
 
+            if post_id in seen_ids:
                 continue
 
-            seen_posts.add(
-                post_id
-            )
+
+            seen_ids.add(post_id)
+
 
             raw_body = post.get(
                 "body",
                 ""
             )
 
+
             metadata = post.get(
                 "json_metadata",
                 "{}"
             )
 
-            (
-                image_url,
-                image_candidates,
-                clean_body
-            ) = extract_image_and_clean_body(
-                raw_body,
-                metadata
+
+            image_url, clean_body = (
+                extract_image_and_clean_body(
+                    raw_body,
+                    metadata
+                )
             )
+
 
             all_posts.append({
 
@@ -669,12 +383,7 @@ def get_recent_posts():
 
                 "body": clean_body,
 
-                "raw_body": raw_body,
-
                 "image": image_url,
-
-                "image_candidates":
-                    image_candidates,
 
                 "category": post.get(
                     "category",
@@ -688,77 +397,87 @@ def get_recent_posts():
 
             })
 
-            added += 1
+
+            added_this_batch += 1
+
 
         print(
-            f"Batch #{batch_number}: "
+            f"Batch #{page_number}: "
             f"{len(result)} received, "
-            f"{added} new posts. "
+            f"{added_this_batch} new posts. "
             f"Total: {len(all_posts)}",
             flush=True
         )
 
+
         last_post = result[-1]
 
+
         new_start_author = (
-            last_post.get(
-                "author"
-            )
+            last_post.get("author")
         )
 
         new_start_permlink = (
-            last_post.get(
-                "permlink"
-            )
+            last_post.get("permlink")
         )
 
+
         if (
-            new_start_author
-            == start_author
+            new_start_author == start_author
             and
-            new_start_permlink
-            == start_permlink
+            new_start_permlink == start_permlink
         ):
 
             print(
-                "Pagination cursor did not change. "
+                "Pagination boundary repeated. "
                 "Stopping safely.",
                 flush=True
             )
 
             break
 
-        start_author = (
-            new_start_author
-        )
 
-        start_permlink = (
-            new_start_permlink
-        )
-
-        if len(all_posts) >= MAX_POSTS:
+        if added_this_batch == 0:
 
             print(
-                f"Reached MAX_POSTS={MAX_POSTS}.",
+                "No new posts in this batch. "
+                "Stopping safely.",
                 flush=True
             )
 
             break
+
+
+        start_author = new_start_author
+        start_permlink = new_start_permlink
+
+
+        if len(all_posts) >= 5000:
+
+            print(
+                "Reached 5000-post safety limit.",
+                flush=True
+            )
+
+            break
+
 
         if len(result) < 100:
 
             print(
                 "Last batch contains fewer "
-                "than 100 posts.",
+                "than 100 results.",
                 flush=True
             )
 
             break
 
+
         time.sleep(0.3)
 
-    # Oldest -> newest
+
     all_posts.reverse()
+
 
     print(
         f"\nTotal historical posts fetched: "
@@ -766,74 +485,74 @@ def get_recent_posts():
         flush=True
     )
 
+
     return all_posts
 
 
 # ============================================================
-# IMAGE DOWNLOAD
+# DOWNLOAD IMAGE
 # ============================================================
 
-def download_image(
-    url,
-    output_path
-):
+def download_image(image_url):
 
-    if not url:
+    if not image_url:
+        return None
 
-        return False
 
     try:
 
         print(
-            f"Downloading image: {url}",
+            f"Downloading image: {image_url}",
             flush=True
         )
 
+
         response = requests.get(
-            url,
-            headers=IMAGE_HEADERS,
-            timeout=30,
-            allow_redirects=True
+            image_url,
+            timeout=20,
+            headers={
+                "User-Agent": "Mozilla/5.0"
+            }
         )
+
 
         response.raise_for_status()
 
-        content_type = (
-            response.headers.get(
-                "Content-Type",
-                ""
-            )
-            .lower()
-        )
 
-        data = response.content
+        content_type = response.headers.get(
+            "content-type",
+            ""
+        ).lower()
 
-        if len(data) < 1000:
 
-            raise RuntimeError(
-                "Downloaded file is too small."
+        if "image" not in content_type:
+
+            print(
+                "URL did not return an image.",
+                flush=True
             )
 
-        if "text/html" in content_type:
+            return None
 
-            raise RuntimeError(
-                "Server returned HTML "
-                "instead of an image."
-            )
 
         with open(
-            output_path,
+            TEMP_IMG_FILE,
             "wb"
-        ) as f:
+        ) as file:
 
-            f.write(data)
+            file.write(
+                response.content
+            )
+
 
         print(
-            "✅ Image downloaded successfully.",
+            "Image downloaded successfully!",
             flush=True
         )
 
-        return True
+
+        return TEMP_IMG_FILE
+
 
     except Exception as e:
 
@@ -842,480 +561,26 @@ def download_image(
             flush=True
         )
 
-        return False
-
-
-# ============================================================
-# FIND WORKING STEEMIT IMAGE
-# ============================================================
-
-def find_working_steemit_image(
-    post,
-    output_path
-):
-
-    candidates = []
-
-    if post.get("image"):
-
-        candidates.append(
-            post["image"]
-        )
-
-    for image in post.get(
-        "image_candidates",
-        []
-    ):
-
-        if image not in candidates:
-
-            candidates.append(
-                image
-            )
-
-    print(
-        f"Found {len(candidates)} "
-        f"Steemit image candidate(s).",
-        flush=True
-    )
-
-    if not candidates:
-
         return None
 
-    for index, url in enumerate(
-        candidates,
-        start=1
-    ):
-
-        print(
-            f"Trying Steemit image "
-            f"{index}: {url}",
-            flush=True
-        )
-
-        for attempt in range(
-            1,
-            3
-        ):
-
-            print(
-                f"Image attempt {attempt}/2",
-                flush=True
-            )
-
-            if download_image(
-                url,
-                output_path
-            ):
-
-                return url
-
-            time.sleep(1)
-
-    print(
-        "❌ No working Steemit image found.",
-        flush=True
-    )
-
-    return None
-
 
 # ============================================================
-# PEXELS SEARCH QUERIES
+# NORMALIZE TITLE FOR VERIFICATION
 # ============================================================
 
-def build_pexels_queries(
-    post
-):
+def normalize_text(text):
 
-    title = post.get(
-        "title",
-        ""
-    ).strip()
+    text = text.lower()
 
-    clean_title = re.sub(
-        r"[^A-Za-z0-9\u0980-\u09FF\u0600-\u06FF\s]",
-        " ",
-        title
-    )
-
-    clean_title = re.sub(
-        r"\s+",
-        " ",
-        clean_title
-    ).strip()
-
-    queries = []
-
-    if clean_title:
-
-        queries.append(
-            clean_title[:100]
-        )
-
-    words = clean_title.split()
-
-    if len(words) >= 4:
-
-        queries.append(
-            " ".join(
-                words[:6]
-            )
-        )
-
-    if len(words) >= 2:
-
-        queries.append(
-            " ".join(
-                words[:3]
-            )
-        )
-
-    # English fallback queries
-    queries.extend([
-        "people",
-        "life",
-        "story",
-        "travel",
-        "world",
-        "lifestyle",
-        "technology"
-    ])
-
-    result = []
-
-    for q in queries:
-
-        q = q.strip()
-
-        if not q:
-
-            continue
-
-        if q.lower() not in [
-            x.lower()
-            for x in result
-        ]:
-
-            result.append(q)
-
-    return result
-
-
-# ============================================================
-# PEXELS FALLBACK
-# ============================================================
-
-def get_pexels_image(
-    post,
-    output_path
-):
-
-    print(
-        "\n🔄 Trying Pexels fallback...",
-        flush=True
-    )
-
-    if not PEXELS_API_KEY:
-
-        print(
-            "⚠️ PEXELS_API_KEY not configured.",
-            flush=True
-        )
-
-        return None
-
-    endpoint = (
-        "https://api.pexels.com/v1/search"
-    )
-
-    headers = {
-        "Authorization":
-            PEXELS_API_KEY
-    }
-
-    queries = build_pexels_queries(
-        post
-    )
-
-    for query in queries:
-
-        print(
-            f"🔎 Pexels query: {query}",
-            flush=True
-        )
-
-        try:
-
-            response = requests.get(
-                endpoint,
-                headers=headers,
-                params={
-                    "query": query,
-                    "per_page": 5,
-                    "orientation": "landscape"
-                },
-                timeout=30
-            )
-
-            if response.status_code != 200:
-
-                print(
-                    f"Pexels API error: "
-                    f"{response.status_code}",
-                    flush=True
-                )
-
-                continue
-
-            data = response.json()
-
-            photos = data.get(
-                "photos",
-                []
-            )
-
-            if not photos:
-
-                continue
-
-            for index, photo in enumerate(
-                photos,
-                start=1
-            ):
-
-                src = photo.get(
-                    "src",
-                    {}
-                )
-
-                image_url = (
-                    src.get("large2x")
-                    or
-                    src.get("large")
-                    or
-                    src.get("original")
-                )
-
-                if not image_url:
-
-                    continue
-
-                print(
-                    f"Trying Pexels image "
-                    f"{index}: {image_url}",
-                    flush=True
-                )
-
-                if download_image(
-                    image_url,
-                    output_path
-                ):
-
-                    photographer = photo.get(
-                        "photographer",
-                        "Unknown"
-                    )
-
-                    photo_page = photo.get(
-                        "url",
-                        ""
-                    )
-
-                    print(
-                        "✅ Pexels image downloaded.",
-                        flush=True
-                    )
-
-                    print(
-                        f"Photographer: "
-                        f"{photographer}",
-                        flush=True
-                    )
-
-                    print(
-                        f"Photo page: "
-                        f"{photo_page}",
-                        flush=True
-                    )
-
-                    return {
-
-                        "source":
-                            "Pexels",
-
-                        "image_url":
-                            image_url,
-
-                        "photographer":
-                            photographer,
-
-                        "photo_page":
-                            photo_page
-
-                    }
-
-        except Exception as e:
-
-            print(
-                f"Pexels request failed: {e}",
-                flush=True
-            )
-
-        time.sleep(1)
-
-    print(
-        "❌ No Pexels image found.",
-        flush=True
-    )
-
-    return None
-
-
-# ============================================================
-# PREPARE THUMBNAIL
-# ============================================================
-
-def prepare_thumbnail(
-    post
-):
-
-    if os.path.exists(
-        TEMP_IMG_FILE
-    ):
-
-        try:
-
-            os.remove(
-                TEMP_IMG_FILE
-            )
-
-        except Exception:
-
-            pass
-
-    # --------------------------------------------------------
-    # 1. STEEMIT IMAGE
-    # --------------------------------------------------------
-
-    print(
-        "\n🖼️ Searching for Steemit image...",
-        flush=True
-    )
-
-    steemit_image = (
-        find_working_steemit_image(
-            post,
-            TEMP_IMG_FILE
-        )
-    )
-
-    if steemit_image:
-
-        return {
-
-            "path":
-                TEMP_IMG_FILE,
-
-            "source":
-                "Steemit",
-
-            "url":
-                steemit_image,
-
-            "photographer":
-                "",
-
-            "photo_page":
-                ""
-
-        }
-
-    # --------------------------------------------------------
-    # 2. PEXELS
-    # --------------------------------------------------------
-
-    pexels_result = (
-        get_pexels_image(
-            post,
-            TEMP_IMG_FILE
-        )
-    )
-
-    if pexels_result:
-
-        return {
-
-            "path":
-                TEMP_IMG_FILE,
-
-            "source":
-                "Pexels",
-
-            "url":
-                pexels_result[
-                    "image_url"
-                ],
-
-            "photographer":
-                pexels_result[
-                    "photographer"
-                ],
-
-            "photo_page":
-                pexels_result[
-                    "photo_page"
-                ]
-
-        }
-
-    return None
-
-
-# ============================================================
-# TEXT NORMALIZATION
-# ============================================================
-
-def normalize_text(
-    text
-):
-
-    if not text:
-
-        return ""
-
-    text = str(text).lower()
-
-    # HTML entities / whitespace
     text = re.sub(
-        r"\s+",
-        " ",
+        r'[^a-z0-9\u0980-\u09ff\s]',
+        ' ',
         text
     )
 
-    return text.strip()
-
-
-def simplified_text(
-    text
-):
-
-    text = normalize_text(
-        text
-    )
-
-    # Keep Unicode letters/numbers
     text = re.sub(
-        r"[^\w\s]",
-        " ",
-        text,
-        flags=re.UNICODE
-    )
-
-    text = re.sub(
-        r"\s+",
-        " ",
+        r'\s+',
+        ' ',
         text
     )
 
@@ -1323,669 +588,18 @@ def simplified_text(
 
 
 # ============================================================
-# TITLE MATCHING
-# ============================================================
-
-def title_matches(
-    page_text,
-    title
-):
-
-    if not page_text or not title:
-
-        return False
-
-    page_normal = normalize_text(
-        page_text
-    )
-
-    title_normal = normalize_text(
-        title
-    )
-
-    # Exact
-    if title_normal in page_normal:
-
-        return True
-
-    page_simple = simplified_text(
-        page_text
-    )
-
-    title_simple = simplified_text(
-        title
-    )
-
-    if (
-        title_simple
-        and
-        title_simple in page_simple
-    ):
-
-        return True
-
-    # Long title partial match
-    words = [
-        w
-        for w in title_simple.split()
-        if len(w) >= 3
-    ]
-
-    if len(words) >= 5:
-
-        important = words[:10]
-
-        matched = sum(
-            1
-            for word in important
-            if word in page_simple
-        )
-
-        required = max(
-            3,
-            (len(important) + 1) // 2
-        )
-
-        if matched >= required:
-
-            return True
-
-    return False
-
-
-# ============================================================
-# CHECK VALID SEREY POST URL
-# ============================================================
-
-def is_real_serey_post_url(
-    url,
-    expected_author=None
-):
-
-    if not url:
-
-        return False
-
-    try:
-
-        parsed = urlparse(
-            url
-        )
-
-        if parsed.netloc.lower() not in [
-            "serey.io",
-            "www.serey.io"
-        ]:
-
-            return False
-
-        path = parsed.path.rstrip("/")
-
-        if "/blog/post/new" in path:
-
-            return False
-
-        if not path.startswith(
-            "/authors/"
-        ):
-
-            return False
-
-        parts = [
-            x
-            for x in path.split("/")
-            if x
-        ]
-
-        # authors / username / permlink
-        if len(parts) < 3:
-
-            return False
-
-        author = parts[1]
-
-        permlink = parts[2]
-
-        if expected_author:
-
-            expected_author = (
-                expected_author
-                .replace("@", "")
-                .strip()
-                .lower()
-            )
-
-            if author.lower() != expected_author:
-
-                return False
-
-        if not permlink:
-
-            return False
-
-        return True
-
-    except Exception:
-
-        return False
-
-
-# ============================================================
-# VERIFY A DIRECT POST URL
-# ============================================================
-
-def verify_post_url(
-    page,
-    post_url,
-    title
-):
-
-    if not is_real_serey_post_url(
-        post_url,
-        SEREY_LOGIN
-    ):
-
-        print(
-            f"⚠️ Invalid Serey post URL rejected: "
-            f"{post_url}",
-            flush=True
-        )
-
-        return None
-
-    print(
-        f"🔎 Checking candidate post URL: "
-        f"{post_url}",
-        flush=True
-    )
-
-    try:
-
-        page.goto(
-            post_url,
-            timeout=40000,
-            wait_until="domcontentloaded"
-        )
-
-        page.wait_for_timeout(
-            5000
-        )
-
-        current_url = page.url
-
-        print(
-            f"Opened URL: {current_url}",
-            flush=True
-        )
-
-        # ----------------------------------------------------
-        # Redirect protection
-        # ----------------------------------------------------
-
-        if not is_real_serey_post_url(
-            current_url,
-            SEREY_LOGIN
-        ):
-
-            print(
-                "⚠️ Candidate redirected away "
-                "from real post URL.",
-                flush=True
-            )
-
-            return None
-
-        # ----------------------------------------------------
-        # BODY TEXT
-        # ----------------------------------------------------
-
-        try:
-
-            body_text = page.locator(
-                "body"
-            ).inner_text(
-                timeout=10000
-            )
-
-        except Exception:
-
-            body_text = ""
-
-        if title_matches(
-            body_text,
-            title
-        ):
-
-            print(
-                "✅ POST TITLE VERIFIED "
-                "ON REAL POST PAGE!",
-                flush=True
-            )
-
-            print(
-                f"🔗 VERIFIED URL: {current_url}",
-                flush=True
-            )
-
-            return current_url
-
-        # ----------------------------------------------------
-        # HTML fallback
-        # ----------------------------------------------------
-
-        try:
-
-            html = page.content()
-
-        except Exception:
-
-            html = ""
-
-        if title_matches(
-            html,
-            title
-        ):
-
-            print(
-                "✅ POST TITLE VERIFIED "
-                "IN PAGE HTML!",
-                flush=True
-            )
-
-            print(
-                f"🔗 VERIFIED URL: {current_url}",
-                flush=True
-            )
-
-            return current_url
-
-    except Exception as e:
-
-        print(
-            f"Direct post verification failed: {e}",
-            flush=True
-        )
-
-    return None
-
-
-# ============================================================
-# VERIFY CURRENT URL AFTER PUBLISH
-# ============================================================
-
-def verify_current_page(
-    page,
-    post
-):
-
-    title = post.get(
-        "title",
-        ""
-    ).strip()
-
-    current_url = page.url
-
-    print(
-        "\n🔎 FIRST PRIORITY: VERIFY CURRENT SEREY URL",
-        flush=True
-    )
-
-    print(
-        f"Current URL: {current_url}",
-        flush=True
-    )
-
-    # This is the most important protection.
-    # If Serey redirected to a real post URL,
-    # verify that URL directly.
-
-    if not is_real_serey_post_url(
-        current_url,
-        SEREY_LOGIN
-    ):
-
-        print(
-            "Current URL is not a real published "
-            "Serey post URL.",
-            flush=True
-        )
-
-        return None
-
-    try:
-
-        body_text = page.locator(
-            "body"
-        ).inner_text(
-            timeout=10000
-        )
-
-        if title_matches(
-            body_text,
-            title
-        ):
-
-            print(
-                "🎉 TITLE FOUND ON CURRENT "
-                "SEREY POST PAGE!",
-                flush=True
-            )
-
-            print(
-                f"🔗 Current verified URL: "
-                f"{current_url}",
-                flush=True
-            )
-
-            return current_url
-
-    except Exception as e:
-
-        print(
-            f"Current page text verification failed: {e}",
-            flush=True
-        )
-
-    # If text wasn't loaded yet, use direct verification
-    return verify_post_url(
-        page,
-        current_url,
-        title
-    )
-
-
-# ============================================================
-# FIND POST LINK ON AUTHOR PAGE
-# ============================================================
-
-def find_serey_post_on_author_page(
-    page,
-    title
-):
-
-    author = (
-        SEREY_LOGIN
-        .replace("@", "")
-        .strip()
-    )
-
-    author_urls = [
-
-        f"{SEREY_BASE}/authors/{author}",
-
-        f"{SEREY_BASE}/authors/@{author}"
-
-    ]
-
-    for author_url in author_urls:
-
-        print(
-            f"Checking author page: "
-            f"{author_url}",
-            flush=True
-        )
-
-        try:
-
-            page.goto(
-                author_url,
-                timeout=40000,
-                wait_until="domcontentloaded"
-            )
-
-            page.wait_for_timeout(
-                6000
-            )
-
-            # ------------------------------------------------
-            # Search links
-            # ------------------------------------------------
-
-            links = page.locator(
-                "a"
-            )
-
-            count = links.count()
-
-            print(
-                f"Author page links found: {count}",
-                flush=True
-            )
-
-            for i in range(
-                count
-            ):
-
-                try:
-
-                    link = links.nth(
-                        i
-                    )
-
-                    href = link.get_attribute(
-                        "href"
-                    )
-
-                    if not href:
-
-                        continue
-
-                    href = urljoin(
-                        SEREY_BASE,
-                        href
-                    )
-
-                    # ------------------------------------------------
-                    # Must be real author post URL
-                    # ------------------------------------------------
-
-                    if not is_real_serey_post_url(
-                        href,
-                        author
-                    ):
-
-                        continue
-
-                    # ------------------------------------------------
-                    # Link text
-                    # ------------------------------------------------
-
-                    try:
-
-                        text = link.inner_text(
-                            timeout=1500
-                        ).strip()
-
-                    except Exception:
-
-                        text = ""
-
-                    # ------------------------------------------------
-                    # Check title in link
-                    # ------------------------------------------------
-
-                    if title_matches(
-                        text,
-                        title
-                    ):
-
-                        print(
-                            "✅ Matching real post "
-                            "link found!",
-                            flush=True
-                        )
-
-                        print(
-                            f"Candidate: {href}",
-                            flush=True
-                        )
-
-                        return href
-
-                    # Sometimes title is in nearby HTML
-                    try:
-
-                        outer_html = link.evaluate(
-                            "(el) => el.outerHTML"
-                        )
-
-                    except Exception:
-
-                        outer_html = ""
-
-                    if title_matches(
-                        outer_html,
-                        title
-                    ):
-
-                        print(
-                            "✅ Matching post found "
-                            "from link HTML!",
-                            flush=True
-                        )
-
-                        return href
-
-                except Exception:
-
-                    continue
-
-        except Exception as e:
-
-            print(
-                f"Author page check failed: {e}",
-                flush=True
-            )
-
-    return None
-
-
-# ============================================================
-# HOMEPAGE SEARCH
-# ============================================================
-
-def search_homepage_for_post(
-    page,
-    title
-):
-
-    print(
-        "\n🔎 Searching Serey homepage...",
-        flush=True
-    )
-
-    try:
-
-        page.goto(
-            SEREY_BASE,
-            timeout=40000,
-            wait_until="domcontentloaded"
-        )
-
-        page.wait_for_timeout(
-            6000
-        )
-
-        links = page.locator(
-            "a"
-        )
-
-        count = links.count()
-
-        print(
-            f"Homepage links found: {count}",
-            flush=True
-        )
-
-        for i in range(
-            min(count, 700)
-        ):
-
-            try:
-
-                link = links.nth(
-                    i
-                )
-
-                href = link.get_attribute(
-                    "href"
-                )
-
-                if not href:
-
-                    continue
-
-                href = urljoin(
-                    SEREY_BASE,
-                    href
-                )
-
-                if not is_real_serey_post_url(
-                    href,
-                    SEREY_LOGIN
-                ):
-
-                    continue
-
-                try:
-
-                    text = link.inner_text(
-                        timeout=1200
-                    ).strip()
-
-                except Exception:
-
-                    text = ""
-
-                if title_matches(
-                    text,
-                    title
-                ):
-
-                    print(
-                        "✅ Matching post found "
-                        "on homepage!",
-                        flush=True
-                    )
-
-                    return href
-
-            except Exception:
-
-                continue
-
-    except Exception as e:
-
-        print(
-            f"Homepage search failed: {e}",
-            flush=True
-        )
-
-    return None
-
-
-# ============================================================
-# FULL SEREY VERIFICATION
+# VERIFY SEREY POST
 # ============================================================
 
 def verify_serey_post(
     page,
-    post,
-    current_publish_url=None
+    post
 ):
 
-    title = post.get(
-        "title",
-        ""
-    ).strip()
+    title = post["title"].strip()
 
     print(
-        "\n" + "=" * 60,
-        flush=True
-    )
-
-    print(
-        "🔎 VERIFYING SEREY PUBLICATION",
+        "\n🔎 VERIFYING POST ON SEREY...",
         flush=True
     )
 
@@ -1994,388 +608,279 @@ def verify_serey_post(
         flush=True
     )
 
-    print(
-        "=" * 60,
-        flush=True
-    )
 
-    # ========================================================
-    # ATTEMPTS
-    # ========================================================
+    # --------------------------------------------------------
+    # First check current page
+    # --------------------------------------------------------
 
-    for attempt in range(
-        1,
-        VERIFY_ATTEMPTS + 1
-    ):
+    try:
 
-        print(
-            f"\nVerification attempt "
-            f"{attempt}/{VERIFY_ATTEMPTS}",
-            flush=True
-        )
-
-        # ====================================================
-        # 1. MOST IMPORTANT:
-        #    URL captured immediately after Publish
-        # ====================================================
-
-        if current_publish_url:
-
-            print(
-                "1️⃣ Checking URL captured "
-                "after final Publish...",
-                flush=True
-            )
-
-            verified = verify_post_url(
-                page,
-                current_publish_url,
-                title
-            )
-
-            if verified:
-
-                print(
-                    "🎉 VERIFIED USING "
-                    "PUBLISH REDIRECT URL!",
-                    flush=True
-                )
-
-                return verified
-
-        # ====================================================
-        # 2. CURRENT PAGE
-        # ====================================================
-
-        print(
-            "2️⃣ Checking current browser page...",
-            flush=True
+        page.wait_for_timeout(
+            5000
         )
 
         current_url = page.url
 
-        if is_real_serey_post_url(
-            current_url,
-            SEREY_LOGIN
+        print(
+            f"Current Serey URL: {current_url}",
+            flush=True
+        )
+
+
+        html = page.content()
+
+
+        normalized_html = normalize_text(
+            html
+        )
+
+        normalized_title = normalize_text(
+            title
+        )
+
+
+        if (
+            normalized_title
+            and
+            normalized_title in normalized_html
         ):
 
-            verified = verify_current_page(
-                page,
-                post
-            )
-
-            if verified:
-
-                return verified
-
-        # ====================================================
-        # 3. AUTHOR PAGE
-        # ====================================================
-
-        print(
-            "3️⃣ Checking Serey author page...",
-            flush=True
-        )
-
-        author_post = (
-            find_serey_post_on_author_page(
-                page,
-                title
-            )
-        )
-
-        if author_post:
-
-            verified = verify_post_url(
-                page,
-                author_post,
-                title
-            )
-
-            if verified:
-
-                print(
-                    "🎉 VERIFIED FROM "
-                    "AUTHOR PAGE!",
-                    flush=True
-                )
-
-                return verified
-
-        # ====================================================
-        # 4. HOMEPAGE
-        # ====================================================
-
-        print(
-            "4️⃣ Checking Serey homepage...",
-            flush=True
-        )
-
-        home_post = (
-            search_homepage_for_post(
-                page,
-                title
-            )
-        )
-
-        if home_post:
-
-            verified = verify_post_url(
-                page,
-                home_post,
-                title
-            )
-
-            if verified:
-
-                print(
-                    "🎉 VERIFIED FROM "
-                    "HOMEPAGE!",
-                    flush=True
-                )
-
-                return verified
-
-        # ====================================================
-        # WAIT
-        # ====================================================
-
-        if attempt < VERIFY_ATTEMPTS:
-
             print(
-                f"⏳ Serey may still be "
-                f"propagating the post.",
-                flush=True
-            )
-
-            print(
-                f"Waiting "
-                f"{VERIFY_WAIT_SECONDS} seconds...",
-                flush=True
-            )
-
-            time.sleep(
-                VERIFY_WAIT_SECONDS
-            )
-
-    print(
-        "\n❌ REAL SEREY POST URL "
-        "COULD NOT BE VERIFIED.",
-        flush=True
-    )
-
-    return None
-
-
-# ============================================================
-# CATEGORY SELECTION
-# ============================================================
-
-def select_category(
-    page
-):
-
-    print(
-        "\n  - Selecting category...",
-        flush=True
-    )
-
-    possible_categories = [
-        "general",
-        "blog",
-        "lifestyle",
-        "culture",
-        "technology",
-        "tech",
-        "news",
-        "other"
-    ]
-
-    try:
-
-        selectors = [
-            'div:has-text("Select category")',
-            '.ant-select',
-            'input[placeholder*="category" i]',
-            '[role="combobox"]'
-        ]
-
-        dropdown = None
-
-        for selector in selectors:
-
-            try:
-
-                loc = page.locator(
-                    selector
-                )
-
-                if loc.count() > 0:
-
-                    for i in range(
-                        min(loc.count(), 10)
-                    ):
-
-                        candidate = loc.nth(i)
-
-                        try:
-
-                            if candidate.is_visible():
-
-                                dropdown = candidate
-
-                                break
-
-                        except Exception:
-
-                            continue
-
-                if dropdown:
-
-                    break
-
-            except Exception:
-
-                continue
-
-        if dropdown:
-
-            dropdown.click(
-                force=True
-            )
-
-            page.wait_for_timeout(
-                1500
-            )
-
-            options = page.locator(
-                '[role="option"], '
-                '.ant-select-item-option, '
-                'li'
-            )
-
-            option_count = (
-                options.count()
-            )
-
-            for i in range(
-                option_count
-            ):
-
-                try:
-
-                    option = options.nth(
-                        i
-                    )
-
-                    text = option.inner_text(
-                        timeout=1000
-                    ).strip()
-
-                    if text.lower() in (
-                        possible_categories
-                    ):
-
-                        option.click(
-                            force=True
-                        )
-
-                        print(
-                            f"  - Category selected: "
-                            f"{text}",
-                            flush=True
-                        )
-
-                        return True
-
-                except Exception:
-
-                    continue
-
-            # Keyboard fallback
-            page.keyboard.press(
-                "ArrowDown"
-            )
-
-            page.keyboard.press(
-                "Enter"
-            )
-
-            print(
-                "  - Category selected "
-                "via keyboard fallback.",
+                "✅ TITLE FOUND ON CURRENT SEREY PAGE!",
                 flush=True
             )
 
             return True
 
-        # Last fallback
-        page.keyboard.press(
-            "Tab"
-        )
-
-        page.keyboard.press(
-            "ArrowDown"
-        )
-
-        page.keyboard.press(
-            "Enter"
-        )
-
-        print(
-            "  - Category selected "
-            "via final keyboard fallback.",
-            flush=True
-        )
-
-        return True
 
     except Exception as e:
 
         print(
-            f"  ⚠️ Category selection skipped: {e}",
+            f"Current-page verification failed: {e}",
             flush=True
         )
 
-        # Category should NOT stop publishing
-        return False
 
+    # --------------------------------------------------------
+    # Open author's profile
+    # --------------------------------------------------------
 
-# ============================================================
-# FIND PUBLISH BUTTON
-# ============================================================
+    profile_urls = [
 
-def get_publish_buttons(
-    page
-):
+        f"https://serey.io/authors/{SEREY_LOGIN}",
 
-    selectors = [
-
-        '.ant-modal-content button:has-text("Publish")',
-
-        '.ant-modal-footer button:has-text("Publish")',
-
-        'button:has-text("Publish")'
+        f"https://serey.io/authors/@{SEREY_LOGIN}"
 
     ]
 
-    for selector in selectors:
+
+    for profile_url in profile_urls:
 
         try:
 
-            buttons = page.locator(
-                selector
+            print(
+                f"Checking profile: {profile_url}",
+                flush=True
             )
 
-            if buttons.count() > 0:
 
-                return buttons
+            page.goto(
+                profile_url,
+                timeout=30000,
+                wait_until="domcontentloaded"
+            )
 
-        except Exception:
 
-            continue
+            page.wait_for_timeout(
+                5000
+            )
 
-    return None
+
+            profile_html = page.content()
+
+
+            normalized_profile = (
+                normalize_text(
+                    profile_html
+                )
+            )
+
+
+            if (
+                normalized_title
+                and
+                normalized_title
+                in
+                normalized_profile
+            ):
+
+                print(
+                    "✅ POST TITLE FOUND ON "
+                    "SEREY PROFILE!",
+                    flush=True
+                )
+
+                print(
+                    f"Verified URL: {profile_url}",
+                    flush=True
+                )
+
+                return True
+
+
+        except Exception as e:
+
+            print(
+                f"Profile verification error: {e}",
+                flush=True
+            )
+
+
+    # --------------------------------------------------------
+    # Search page links for matching title
+    # --------------------------------------------------------
+
+    try:
+
+        print(
+            "Searching visible Serey links...",
+            flush=True
+        )
+
+
+        page.goto(
+            "https://serey.io",
+            timeout=30000,
+            wait_until="domcontentloaded"
+        )
+
+
+        page.wait_for_timeout(
+            4000
+        )
+
+
+        links = page.locator(
+            "a"
+        )
+
+
+        link_count = links.count()
+
+
+        for i in range(
+            min(link_count, 300)
+        ):
+
+            try:
+
+                link = links.nth(i)
+
+                text = link.inner_text(
+                    timeout=1000
+                ).strip()
+
+
+                if not text:
+                    continue
+
+
+                if (
+                    normalize_text(title)
+                    in
+                    normalize_text(text)
+                ):
+
+                    href = link.get_attribute(
+                        "href"
+                    )
+
+
+                    print(
+                        "✅ MATCHING POST LINK "
+                        "FOUND ON SEREY!",
+                        flush=True
+                    )
+
+
+                    print(
+                        f"Link: {href}",
+                        flush=True
+                    )
+
+
+                    if href:
+
+                        if href.startswith(
+                            "/"
+                        ):
+
+                            href = (
+                                "https://serey.io"
+                                + href
+                            )
+
+
+                        page.goto(
+                            href,
+                            timeout=30000
+                        )
+
+
+                        page.wait_for_timeout(
+                            4000
+                        )
+
+
+                        post_html = page.content()
+
+
+                        if (
+                            normalize_text(title)
+                            in
+                            normalize_text(
+                                post_html
+                            )
+                        ):
+
+                            print(
+                                "✅ POST PAGE VERIFIED!",
+                                flush=True
+                            )
+
+                            print(
+                                f"Verified URL: "
+                                f"{page.url}",
+                                flush=True
+                            )
+
+                            return True
+
+
+            except Exception:
+                continue
+
+
+    except Exception as e:
+
+        print(
+            f"Link search failed: {e}",
+            flush=True
+        )
+
+
+    print(
+        "❌ VERIFICATION FAILED.",
+        flush=True
+    )
+
+    print(
+        "Post will NOT be added to "
+        "synced_posts.json.",
+        flush=True
+    )
+
+    return False
 
 
 # ============================================================
@@ -2387,72 +892,50 @@ def publish_to_serey(
     post
 ):
 
-    title = post.get(
-        "title",
-        ""
-    ).strip()
-
     print(
-        "\n" + "-" * 60,
+        f"\n---> Publishing to Serey: "
+        f"{post['title']}",
         flush=True
     )
 
-    print(
-        f"---> Publishing to Serey: {title}",
-        flush=True
-    )
-
-    temp_img_path = TEMP_IMG_FILE
-
-    publish_url = None
 
     try:
 
-        # ====================================================
-        # 1. OPEN NEW POST
-        # ====================================================
-
-        print(
-            "\nOpening Serey editor...",
-            flush=True
-        )
-
         page.goto(
-            f"{SEREY_BASE}/blog/post/new",
-            timeout=60000,
-            wait_until="domcontentloaded"
+            "https://serey.io/blog/post/new",
+            timeout=60000
         )
+
 
         page.wait_for_timeout(
-            5000
+            4000
         )
 
-        # ====================================================
-        # 2. TITLE
-        # ====================================================
+
+        # ----------------------------------------------------
+        # TITLE
+        # ----------------------------------------------------
 
         title_box = page.locator(
             'input[placeholder*="title" i], '
             'input[placeholder*="Title"]'
         ).first
 
-        title_box.wait_for(
-            state="visible",
-            timeout=20000
-        )
 
         title_box.fill(
-            title
+            post["title"]
         )
+
 
         print(
             "  - Title filled!",
             flush=True
         )
 
-        # ====================================================
-        # 3. BODY
-        # ====================================================
+
+        # ----------------------------------------------------
+        # BODY
+        # ----------------------------------------------------
 
         body_box = page.locator(
             'div[contenteditable="true"], '
@@ -2460,315 +943,237 @@ def publish_to_serey(
             'textarea'
         ).first
 
-        body_box.wait_for(
-            state="visible",
-            timeout=20000
-        )
 
         body_box.fill(
-            post.get(
-                "body",
-                ""
-            )
+            post["body"]
         )
+
 
         print(
             "  - Clean body content filled!",
             flush=True
         )
 
+
         page.wait_for_timeout(
             2000
         )
 
-        # ====================================================
-        # 4. IMAGE
-        # ====================================================
 
-        thumbnail = prepare_thumbnail(
-            post
-        )
+        # ----------------------------------------------------
+        # IMAGE
+        # ----------------------------------------------------
 
-        if thumbnail:
+        if post.get("image"):
 
             try:
 
-                file_inputs = page.locator(
-                    'input[type="file"]'
+                temp_image = download_image(
+                    post["image"]
                 )
 
-                file_count = (
-                    file_inputs.count()
-                )
 
-                if file_count > 0:
+                if temp_image:
 
-                    file_inputs.first.set_input_files(
-                        thumbnail["path"]
-                    )
+                    file_input = page.locator(
+                        'input[type="file"]'
+                    ).first
 
-                    print(
-                        "  - Thumbnail uploaded!",
-                        flush=True
-                    )
 
-                    print(
-                        f"  - Source: "
-                        f"{thumbnail['source']}",
-                        flush=True
-                    )
+                    if file_input.count() > 0:
 
-                    if thumbnail.get(
-                        "photographer"
-                    ):
+                        file_input.set_input_files(
+                            temp_image
+                        )
+
 
                         print(
-                            f"  - Photographer: "
-                            f"{thumbnail['photographer']}",
+                            "  - Thumbnail image uploaded!",
                             flush=True
                         )
 
-                    page.wait_for_timeout(
-                        5000
-                    )
 
-                else:
+                        page.wait_for_timeout(
+                            4000
+                        )
 
-                    print(
-                        "  ⚠️ File input not found.",
-                        flush=True
-                    )
+                    else:
+
+                        print(
+                            "  - File input not found.",
+                            flush=True
+                        )
+
 
             except Exception as e:
 
                 print(
-                    f"  ⚠️ Image upload failed: {e}",
+                    f"  - Thumbnail upload skipped: {e}",
                     flush=True
                 )
 
-        else:
 
-            print(
-                "  ⚠️ No thumbnail available.",
-                flush=True
-            )
+        # ----------------------------------------------------
+        # FIRST PUBLISH
+        # ----------------------------------------------------
 
-            print(
-                "  - Continuing without image.",
-                flush=True
-            )
-
-        # ====================================================
-        # 5. FIRST PUBLISH
-        # ====================================================
-
-        print(
-            "\n  - Looking for first Publish button...",
-            flush=True
-        )
-
-        publish_buttons = get_publish_buttons(
-            page
-        )
-
-        if not publish_buttons:
-
-            raise RuntimeError(
-                "First Publish button not found."
-            )
-
-        publish_buttons.first.click(
+        page.locator(
+            'button:has-text("Publish")'
+        ).first.click(
             force=True
         )
+
 
         print(
             "  - First Publish button clicked!",
             flush=True
         )
 
-        page.wait_for_timeout(
-            7000
-        )
-
-        # ====================================================
-        # 6. CATEGORY
-        # ====================================================
-
-        select_category(
-            page
-        )
 
         page.wait_for_timeout(
-            2500
+            6000
         )
 
-        # ====================================================
-        # 7. FINAL PUBLISH
-        # ====================================================
 
-        print(
-            "\n  - Looking for FINAL Publish button...",
-            flush=True
-        )
+        # ----------------------------------------------------
+        # CATEGORY
+        # ----------------------------------------------------
 
-        final_buttons = get_publish_buttons(
-            page
-        )
+        try:
 
-        if not final_buttons:
+            dropdown = page.locator(
+                'div:has-text("Select category"), '
+                '.ant-select, '
+                'input[placeholder*="category" i]'
+            ).first
 
-            raise RuntimeError(
-                "Final Publish button not found."
+
+            dropdown.click(
+                force=True
             )
 
-        count = final_buttons.count()
 
-        print(
-            f"  - Found {count} Publish "
-            f"button(s).",
-            flush=True
+            page.wait_for_timeout(
+                1500
+            )
+
+
+            option = page.locator(
+                '.ant-select-item-option, '
+                'div[title="Tech"], '
+                'div[title="Crypto"], '
+                'li'
+            ).first
+
+
+            if option.count() > 0:
+
+                option.click(
+                    force=True
+                )
+
+            else:
+
+                page.keyboard.press(
+                    "ArrowDown"
+                )
+
+                page.keyboard.press(
+                    "Enter"
+                )
+
+
+            print(
+                "  - Category selected!",
+                flush=True
+            )
+
+
+        except Exception:
+
+            print(
+                "  - Category auto-selecting "
+                "via keyboard...",
+                flush=True
+            )
+
+
+            page.keyboard.press(
+                "Tab"
+            )
+
+            page.keyboard.press(
+                "ArrowDown"
+            )
+
+            page.keyboard.press(
+                "Enter"
+            )
+
+
+        page.wait_for_timeout(
+            2000
         )
 
-        # LAST button is normally modal confirmation
-        final_buttons.last.click(
+
+        # ----------------------------------------------------
+        # FINAL PUBLISH
+        # ----------------------------------------------------
+
+        final_publish = page.locator(
+            '.ant-modal-content button:has-text("Publish"), '
+            '.ant-modal-footer button:has-text("Publish"), '
+            'button:has-text("Publish")'
+        ).last
+
+
+        final_publish.click(
             force=True
         )
 
+
         print(
-            "  - FINAL Publish button clicked!",
+            "  - Final Publish button clicked!",
             flush=True
         )
 
-        # ====================================================
-        # 8. VERY IMPORTANT:
-        #    CAPTURE URL AFTER PUBLISH
-        # ====================================================
 
-        print(
-            "\n  ⏳ Waiting for Serey redirect...",
-            flush=True
-        )
-
-        # Small initial wait
+        # Give Serey enough time
         page.wait_for_timeout(
-            3000
+            12000
         )
 
-        publish_url = page.url
+
+        # ----------------------------------------------------
+        # REAL VERIFICATION
+        # ----------------------------------------------------
+
+        verified = verify_serey_post(
+            page,
+            post
+        )
+
+
+        if verified:
+
+            print(
+                f"\n✅ VERIFIED & CONFIRMED: "
+                f"{post['title']}",
+                flush=True
+            )
+
+            return True
+
 
         print(
-            f"  🌐 URL immediately after "
-            f"Publish: {publish_url}",
+            f"\n❌ PUBLISH NOT VERIFIED: "
+            f"{post['title']}",
             flush=True
         )
 
-        # Give Serey additional time
-        page.wait_for_timeout(
-            7000
-        )
 
-        # Update URL if browser changed it
-        if page.url != publish_url:
+        return False
 
-            publish_url = page.url
-
-            print(
-                f"  🌐 Updated Serey URL: "
-                f"{publish_url}",
-                flush=True
-            )
-
-        # ====================================================
-        # 9. REAL VERIFICATION
-        # ====================================================
-
-        verified_url = (
-            verify_serey_post(
-                page,
-                post,
-                current_publish_url=publish_url
-            )
-        )
-
-        # ====================================================
-        # 10. DELETE TEMP IMAGE
-        # ====================================================
-
-        if os.path.exists(
-            temp_img_path
-        ):
-
-            try:
-
-                os.remove(
-                    temp_img_path
-                )
-
-            except Exception:
-
-                pass
-
-        # ====================================================
-        # 11. SUCCESS ONLY IF VERIFIED
-        # ====================================================
-
-        if verified_url:
-
-            print(
-                "\n" + "=" * 60,
-                flush=True
-            )
-
-            print(
-                "🎉 VERIFIED & CONFIRMED!",
-                flush=True
-            )
-
-            print(
-                f"Title: {title}",
-                flush=True
-            )
-
-            print(
-                f"Serey URL: {verified_url}",
-                flush=True
-            )
-
-            print(
-                "=" * 60,
-                flush=True
-            )
-
-            return {
-
-                "success":
-                    True,
-
-                "url":
-                    verified_url
-
-            }
-
-        print(
-            "\n❌ PUBLISH COULD NOT BE VERIFIED.",
-            flush=True
-        )
-
-        print(
-            "The post will NOT be added to "
-            "synced_posts.json.",
-            flush=True
-        )
-
-        return {
-
-            "success":
-                False,
-
-            "url":
-                None
-
-        }
 
     except Exception as e:
 
@@ -2778,310 +1183,25 @@ def publish_to_serey(
             flush=True
         )
 
-        return {
 
-            "success":
-                False,
+        return False
 
-            "url":
-                None
-
-        }
 
     finally:
 
         if os.path.exists(
-            temp_img_path
+            TEMP_IMG_FILE
         ):
 
             try:
 
                 os.remove(
-                    temp_img_path
+                    TEMP_IMG_FILE
                 )
 
             except Exception:
 
                 pass
-
-
-# ============================================================
-# LOGIN TO SEREY
-# ============================================================
-
-def login_to_serey(
-    page
-):
-
-    print(
-        "\nLogging into Serey.io...",
-        flush=True
-    )
-
-    try:
-
-        page.goto(
-            SEREY_BASE,
-            timeout=60000,
-            wait_until="domcontentloaded"
-        )
-
-        page.wait_for_timeout(
-            5000
-        )
-
-        # ----------------------------------------------------
-        # If already logged in
-        # ----------------------------------------------------
-
-        current_url = page.url
-
-        if (
-            "/blog/post/new"
-            in current_url
-        ):
-
-            print(
-                "Already logged in.",
-                flush=True
-            )
-
-            return True
-
-        # ----------------------------------------------------
-        # Login button
-        # ----------------------------------------------------
-
-        print(
-            "Clicking Log in button...",
-            flush=True
-        )
-
-        login_buttons = page.locator(
-            'a:has-text("Log in"), '
-            'button:has-text("Log in"), '
-            'a:has-text("Log In"), '
-            'button:has-text("Log In")'
-        )
-
-        if login_buttons.count() == 0:
-
-            # Maybe already logged in
-            body_text = ""
-
-            try:
-
-                body_text = page.locator(
-                    "body"
-                ).inner_text(
-                    timeout=5000
-                )
-
-            except Exception:
-
-                pass
-
-            if (
-                "log out"
-                in body_text.lower()
-                or
-                "logout"
-                in body_text.lower()
-            ):
-
-                print(
-                    "✅ Already logged into Serey.",
-                    flush=True
-                )
-
-                return True
-
-            raise RuntimeError(
-                "Log in button not found."
-            )
-
-        login_buttons.first.click(
-            force=True
-        )
-
-        page.wait_for_timeout(
-            5000
-        )
-
-        # ----------------------------------------------------
-        # Username
-        # ----------------------------------------------------
-
-        username_box = page.locator(
-            'input[placeholder="Username"], '
-            'input[placeholder*="Username" i]'
-        ).first
-
-        username_box.wait_for(
-            state="visible",
-            timeout=20000
-        )
-
-        username_box.fill(
-            SEREY_LOGIN
-        )
-
-        # ----------------------------------------------------
-        # Password / Private Key
-        # ----------------------------------------------------
-
-        password_box = page.locator(
-            'input[placeholder="Private Key or Password"], '
-            'input[placeholder*="Private Key" i], '
-            'input[type="password"]'
-        ).first
-
-        password_box.wait_for(
-            state="visible",
-            timeout=20000
-        )
-
-        password_box.fill(
-            SEREY_PASSWORD
-        )
-
-        # ----------------------------------------------------
-        # Login submit
-        # ----------------------------------------------------
-
-        submit_buttons = page.locator(
-            '.ant-modal-content button:has-text("Log in"), '
-            '.ant-modal-content button:has-text("Log In"), '
-            'button:has-text("Log in"), '
-            'button:has-text("Log In")'
-        )
-
-        if submit_buttons.count() == 0:
-
-            raise RuntimeError(
-                "Login submit button not found."
-            )
-
-        submit_buttons.last.click(
-            force=True
-        )
-
-        print(
-            "Login button submitted.",
-            flush=True
-        )
-
-        page.wait_for_timeout(
-            8000
-        )
-
-        # ----------------------------------------------------
-        # Check errors
-        # ----------------------------------------------------
-
-        try:
-
-            body_text = page.locator(
-                "body"
-            ).inner_text(
-                timeout=10000
-            )
-
-        except Exception:
-
-            body_text = ""
-
-        lower = body_text.lower()
-
-        error_phrases = [
-
-            "invalid password",
-            "invalid private key",
-            "login failed",
-            "incorrect password",
-            "authentication failed",
-            "invalid credentials"
-
-        ]
-
-        for phrase in error_phrases:
-
-            if phrase in lower:
-
-                raise RuntimeError(
-                    f"Serey login error: {phrase}"
-                )
-
-        # ----------------------------------------------------
-        # Check logged-in state
-        # ----------------------------------------------------
-
-        if (
-            "log in"
-            not in lower
-            or
-            "log out"
-            in lower
-            or
-            "logout"
-            in lower
-        ):
-
-            print(
-                "✅ LOGGED INTO SEREY SUCCESSFULLY!",
-                flush=True
-            )
-
-            print(
-                f"Current URL: {page.url}",
-                flush=True
-            )
-
-            return True
-
-        # Even if text check is inconclusive,
-        # try opening editor.
-        print(
-            "Login text check inconclusive. "
-            "Testing editor access...",
-            flush=True
-        )
-
-        page.goto(
-            f"{SEREY_BASE}/blog/post/new",
-            timeout=60000,
-            wait_until="domcontentloaded"
-        )
-
-        page.wait_for_timeout(
-            4000
-        )
-
-        if (
-            "/blog/post/new"
-            in page.url
-        ):
-
-            print(
-                "✅ Serey editor accessible. "
-                "Login successful.",
-                flush=True
-            )
-
-            return True
-
-        raise RuntimeError(
-            "Could not confirm Serey login."
-        )
-
-    except Exception as e:
-
-        print(
-            f"❌ Login failed: {e}",
-            flush=True
-        )
-
-        return False
 
 
 # ============================================================
@@ -3095,91 +1215,44 @@ def main():
         flush=True
     )
 
+
     print(
         "       STEEMIT -> SEREY AUTOMATION",
         flush=True
     )
+
 
     print(
         "=" * 60,
         flush=True
     )
 
-    print(
-        f"Steemit username: @{STEEM_USERNAME}",
-        flush=True
-    )
-
-    print(
-        f"Serey login: {SEREY_LOGIN}",
-        flush=True
-    )
-
-    print(
-        f"Posts per run: {POSTS_PER_RUN}",
-        flush=True
-    )
-
-    print(
-        f"Maximum historical posts: {MAX_POSTS}",
-        flush=True
-    )
-
-    if PEXELS_API_KEY:
-
-        print(
-            "Pexels API key: AVAILABLE",
-            flush=True
-        )
-
-    else:
-
-        print(
-            "Pexels API key: NOT AVAILABLE "
-            "(Pexels fallback disabled)",
-            flush=True
-        )
-
-    # ========================================================
-    # LOAD SYNCED
-    # ========================================================
 
     synced_posts = (
         load_synced_posts()
     )
 
+
     print(
-        f"\nPreviously synced posts: "
+        f"Previously synced posts: "
         f"{len(synced_posts)}",
         flush=True
     )
 
-    # ========================================================
-    # FETCH
-    # ========================================================
+
+    # --------------------------------------------------------
+    # FETCH ALL POSTS
+    # --------------------------------------------------------
 
     posts = get_recent_posts()
 
-    print(
-        f"Total posts fetched: "
-        f"{len(posts)}",
-        flush=True
-    )
 
-    if not posts:
-
-        print(
-            "No Steemit posts found.",
-            flush=True
-        )
-
-        return
-
-    # ========================================================
+    # --------------------------------------------------------
     # FIND UNSYNCED
-    # ========================================================
+    # --------------------------------------------------------
 
     new_posts = []
+
 
     for post in posts:
 
@@ -3188,11 +1261,20 @@ def main():
             f'{post["permlink"]}'
         )
 
+
         if post_id not in synced_posts:
 
             new_posts.append(
                 post
             )
+
+
+    print(
+        f"Total posts fetched: "
+        f"{len(posts)}",
+        flush=True
+    )
+
 
     print(
         f"Unsynced posts available: "
@@ -3200,21 +1282,22 @@ def main():
         flush=True
     )
 
-    # ========================================================
-    # POSTS FOR THIS RUN
-    # ========================================================
+
+    # --------------------------------------------------------
+    # LIMIT POSTS PER RUN
+    # --------------------------------------------------------
 
     new_posts_to_run = (
-        new_posts[
-            :POSTS_PER_RUN
-        ]
+        new_posts[:POSTS_PER_RUN]
     )
+
 
     print(
         f"Publishing this run: "
         f"{len(new_posts_to_run)} post(s)",
         flush=True
     )
+
 
     if not new_posts_to_run:
 
@@ -3225,177 +1308,205 @@ def main():
 
         return
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # PLAYWRIGHT
-    # ========================================================
+    # --------------------------------------------------------
 
     with sync_playwright() as p:
 
-        browser = None
+        browser = p.chromium.launch(
+            headless=True
+        )
+
+
+        context = browser.new_context(
+
+            viewport={
+                "width": 1280,
+                "height": 800
+            },
+
+            user_agent=(
+                "Mozilla/5.0 "
+                "(Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/122.0.0.0 "
+                "Safari/537.36"
+            )
+        )
+
+
+        page = context.new_page()
+
+
+        # ----------------------------------------------------
+        # LOGIN
+        # ----------------------------------------------------
+
+        print(
+            "\nLogging into Serey.io...",
+            flush=True
+        )
+
 
         try:
 
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu"
-                ]
+            page.goto(
+                "https://serey.io",
+                timeout=60000
             )
 
-            context = browser.new_context(
 
-                viewport={
-                    "width": 1280,
-                    "height": 800
-                },
-
-                user_agent=BROWSER_USER_AGENT,
-
-                locale="en-US"
-
+            page.wait_for_timeout(
+                4000
             )
 
-            page = context.new_page()
 
-            # =================================================
-            # LOGIN
-            # =================================================
+            print(
+                "Clicking Log in button...",
+                flush=True
+            )
 
-            if not login_to_serey(
-                page
-            ):
 
-                print(
-                    "❌ Cannot continue without Serey login.",
-                    flush=True
-                )
+            page.locator(
+                'a:has-text("Log in"), '
+                'button:has-text("Log in"), '
+                'a:has-text("Log In"), '
+                'button:has-text("Log In")'
+            ).first.click(
+                force=True
+            )
 
-                return
 
-            # =================================================
-            # PUBLISH
-            # =================================================
+            page.wait_for_timeout(
+                5000
+            )
 
-            for post in new_posts_to_run:
+
+            page.wait_for_selector(
+                'input[placeholder="Username"], '
+                'input[placeholder*="Username"]',
+                timeout=20000
+            )
+
+
+            page.locator(
+                'input[placeholder="Username"], '
+                'input[placeholder*="Username"]'
+            ).first.fill(
+                SEREY_LOGIN
+            )
+
+
+            page.locator(
+                'input[placeholder="Private Key or Password"], '
+                'input[placeholder*="Private Key"]'
+            ).first.fill(
+                SEREY_PASSWORD
+            )
+
+
+            page.locator(
+                '.ant-modal-content button:has-text("Log in"), '
+                '.ant-modal-content button:has-text("Log In"), '
+                'button:has-text("Log in")'
+            ).last.click(
+                force=True
+            )
+
+
+            page.wait_for_timeout(
+                6000
+            )
+
+
+            print(
+                "LOGGED INTO SEREY SUCCESSFULLY!",
+                flush=True
+            )
+
+
+        except Exception as e:
+
+            print(
+                f"Login failed: {e}",
+                flush=True
+            )
+
+
+            browser.close()
+
+            return
+
+
+        # ----------------------------------------------------
+        # PUBLISH ONE POST
+        # ----------------------------------------------------
+
+        for post in new_posts_to_run:
+
+            success = publish_to_serey(
+                page,
+                post
+            )
+
+
+            if success:
 
                 post_id = (
                     f'{post["author"]}/'
                     f'{post["permlink"]}'
                 )
 
+
+                synced_posts.add(
+                    post_id
+                )
+
+
+                save_synced_posts(
+                    synced_posts
+                )
+
+
                 print(
-                    "\n" + "#" * 60,
+                    f"✅ Saved as synced: "
+                    f"{post_id}",
+                    flush=True
+                )
+
+
+            else:
+
+                print(
+                    "\n⚠️ Post was NOT verified.",
                     flush=True
                 )
 
                 print(
-                    f"Processing: {post_id}",
+                    "It will remain unsynced "
+                    "and can be retried "
+                    "on the next run.",
                     flush=True
                 )
 
-                print(
-                    f"Title: {post['title']}",
-                    flush=True
-                )
 
-                print(
-                    "#" * 60,
-                    flush=True
-                )
+        browser.close()
 
-                result = publish_to_serey(
-                    page,
-                    post
-                )
-
-                # =============================================
-                # SAVE ONLY AFTER REAL VERIFICATION
-                # =============================================
-
-                if (
-                    result
-                    and
-                    result.get("success")
-                ):
-
-                    synced_posts.add(
-                        post_id
-                    )
-
-                    saved = save_synced_posts(
-                        synced_posts
-                    )
-
-                    if saved:
-
-                        print(
-                            "\n✅ SUCCESSFULLY SAVED "
-                            "AS SYNCED!",
-                            flush=True
-                        )
-
-                    else:
-
-                        print(
-                            "\n⚠️ Post verified but "
-                            "synced_posts.json could not "
-                            "be saved.",
-                            flush=True
-                        )
-
-                    if result.get(
-                        "url"
-                    ):
-
-                        print(
-                            f"🔗 Published Serey URL: "
-                            f"{result['url']}",
-                            flush=True
-                        )
-
-                else:
-
-                    print(
-                        "\n⚠️ POST WAS NOT VERIFIED.",
-                        flush=True
-                    )
-
-                    print(
-                        "❌ It will NOT be added "
-                        "to synced_posts.json.",
-                        flush=True
-                    )
-
-                    print(
-                        "It can be retried on "
-                        "the next GitHub Actions run.",
-                        flush=True
-                    )
-
-        finally:
-
-            if browser:
-
-                try:
-
-                    browser.close()
-
-                except Exception:
-
-                    pass
 
     print(
         "\n" + "=" * 60,
         flush=True
     )
 
+
     print(
         "SYNC COMPLETED",
         flush=True
     )
+
 
     print(
         "=" * 60,
