@@ -153,72 +153,78 @@ def save_synced_posts(posts):
 # IMAGE + BODY CLEANING
 # ============================================================
 
-def extract_image_and_clean_body(
-    body_text,
-    json_metadata_str
-):
+def extract_image_and_clean_body(body_text, json_metadata_str):
 
-    first_image_url = None
+    image_urls = []
 
+    # 1. Steem metadata থেকে সব image নেওয়া
     try:
+        meta = json.loads(json_metadata_str)
 
-        meta = json.loads(
-            json_metadata_str
-        )
+        if isinstance(meta, dict):
 
-        if (
-            isinstance(meta, dict)
-            and
-            isinstance(
-                meta.get("image"),
-                list
-            )
-            and
-            meta["image"]
-        ):
+            images = meta.get("image", [])
 
-            first_image_url = (
-                meta["image"][0]
-            )
+            if isinstance(images, list):
+
+                for img in images:
+
+                    if isinstance(img, str) and img.startswith("http"):
+
+                        if img not in image_urls:
+                            image_urls.append(img)
 
     except Exception:
         pass
 
 
-    if not first_image_url:
+    # 2. Markdown image URL খোঁজা
+    markdown_images = re.findall(
+        r'!\[[^\]]*\]\((https?://[^)\s]+)\)',
+        body_text,
+        re.IGNORECASE
+    )
 
-        match = re.search(
-            r'!\[[^\]]*\]\((https?://[^)\s]+)\)',
-            body_text,
-            re.IGNORECASE
-        )
+    for img in markdown_images:
 
-        if match:
-            first_image_url = match.group(1)
+        img = img.strip().rstrip(".,)\"'")
 
-
-    if not first_image_url:
-
-        match = re.search(
-            r'https?://[^\s<>"\']+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s<>"\']*)?',
-            body_text,
-            re.IGNORECASE
-        )
-
-        if match:
-            first_image_url = match.group(0)
+        if img not in image_urls:
+            image_urls.append(img)
 
 
-    clean_body = body_text
+    # 3. Body-এর সরাসরি image URL খোঁজা
+    direct_images = re.findall(
+        r'https?://[^\s<>"\']+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s<>"\']*)?',
+        body_text,
+        re.IGNORECASE
+    )
+
+    for img in direct_images:
+
+        img = img.strip().rstrip(".,)\"'")
+
+        if img not in image_urls:
+            image_urls.append(img)
 
 
-    clean_body = re.sub(
-        r'!\[[^\]]*\]\([^)]+\)',
-        '',
-        clean_body
+    # প্রথম image URL return করবে
+    first_image_url = (
+        image_urls[0]
+        if image_urls
+        else None
     )
 
 
+    # Body থেকে markdown image সরানো
+    clean_body = re.sub(
+        r'!\[[^\]]*\]\([^)]+\)',
+        '',
+        body_text
+    )
+
+
+    # Body থেকে image URL সরানো
     clean_body = re.sub(
         r'https?://[^\s<>"\']+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s<>"\']*)?',
         '',
@@ -234,12 +240,7 @@ def extract_image_and_clean_body(
     )
 
 
-    return (
-        first_image_url,
-        clean_body.strip()
-    )
-
-
+    return first_image_url, clean_body.strip()
 # ============================================================
 # FETCH ALL STEEM POSTS
 # ============================================================
@@ -499,70 +500,159 @@ def download_image(image_url):
         return None
 
 
-    try:
+    # Image URL-এর তালিকা বানানো
+    image_urls = []
+
+
+    if isinstance(image_url, list):
+
+        image_urls = image_url
+
+    else:
+
+        image_urls = [
+            image_url
+        ]
+
+
+    user_agents = [
+
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 "
+        "(KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36",
+
+        "Mozilla/5.0 (Linux; Android 13; Mobile) "
+        "AppleWebKit/537.36 "
+        "(KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Mobile Safari/537.36"
+
+    ]
+
+
+    # প্রতিটি image URL চেষ্টা করবে
+    for url_number, url in enumerate(
+        image_urls,
+        1
+    ):
+
+        if not url:
+            continue
+
+
+        url = (
+            url
+            .strip()
+            .rstrip('.,)"\'')
+        )
+
 
         print(
-            f"Downloading image: {image_url}",
+            f"Trying image {url_number}: {url}",
             flush=True
         )
 
 
-        response = requests.get(
-            image_url,
-            timeout=20,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            }
-        )
+        for attempt, user_agent in enumerate(
+            user_agents,
+            1
+        ):
+
+            try:
+
+                response = requests.get(
+
+                    url,
+
+                    timeout=30,
+
+                    headers={
+
+                        "User-Agent": user_agent,
+
+                        "Accept":
+                        "image/avif,image/webp,"
+                        "image/apng,image/svg+xml,"
+                        "image/*,*/*;q=0.8",
+
+                        "Referer":
+                        "https://steemit.com/"
+
+                    },
+
+                    allow_redirects=True
+
+                )
 
 
-        response.raise_for_status()
+                response.raise_for_status()
 
 
-        content_type = response.headers.get(
-            "content-type",
-            ""
-        ).lower()
+                content_type = (
+                    response.headers
+                    .get(
+                        "content-type",
+                        ""
+                    )
+                    .lower()
+                )
 
 
-        if "image" not in content_type:
+                if content_type.startswith(
+                    "image/"
+                ):
 
-            print(
-                "URL did not return an image.",
-                flush=True
-            )
+                    with open(
+                        TEMP_IMG_FILE,
+                        "wb"
+                    ) as file:
 
-            return None
-
-
-        with open(
-            TEMP_IMG_FILE,
-            "wb"
-        ) as file:
-
-            file.write(
-                response.content
-            )
+                        file.write(
+                            response.content
+                        )
 
 
-        print(
-            "Image downloaded successfully!",
-            flush=True
-        )
+                    file_size = os.path.getsize(
+                        TEMP_IMG_FILE
+                    )
 
 
-        return TEMP_IMG_FILE
+                    if file_size > 100:
+
+                        print(
+                            "✅ Image downloaded successfully!",
+                            flush=True
+                        )
 
 
-    except Exception as e:
+                        return TEMP_IMG_FILE
 
-        print(
-            f"Image download failed: {e}",
-            flush=True
-        )
 
-        return None
+                print(
+                    f"Not a valid image "
+                    f"(Content-Type: {content_type})",
+                    flush=True
+                )
 
+
+            except Exception as e:
+
+                print(
+                    f"Image attempt {attempt} failed: {e}",
+                    flush=True
+                )
+
+
+                time.sleep(2)
+
+
+    print(
+        "❌ NO WORKING IMAGE FOUND.",
+        flush=True
+    )
+
+
+    return None
 
 # ============================================================
 # NORMALIZE TITLE FOR VERIFICATION
