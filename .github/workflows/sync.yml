@@ -5,6 +5,9 @@ on:
   schedule:
     - cron: "0 4,13 * * *"
 
+permissions:
+  contents: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -40,13 +43,4 @@ jobs:
             git add synced_posts.json
             git commit -m "Update synced_posts.json [skip ci]" || echo "No changes"
             git push || echo "Push skipped"
-          else
-            echo "synced_posts.json does not exist. Skipping push."
           fi
-
-      - name: Upload Error Screenshots on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: error-screenshots
-          path: "*.png"
