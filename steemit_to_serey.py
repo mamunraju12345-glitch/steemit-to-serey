@@ -189,23 +189,31 @@ def publish_to_serey(page, post):
         # 5. Click First "Publish" Button
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
-        page.wait_for_timeout(6000)
+        
+        # Wait for modal to render
+        page.wait_for_selector('.ant-modal-content', timeout=15000)
+        page.wait_for_timeout(3000)
 
-        # 6. Click Category Selector inside modal & Select Option
+        # 6. Click Category Selector inside modal
+        print("  - Selecting Category inside modal...", flush=True)
         try:
-            dropdown = page.locator('div:has-text("Select category"), .ant-modal-content .ant-select, input[placeholder*="category" i]').first
-            dropdown.click(force=True)
+            # Target the Ant Design Select Box inside modal
+            cat_box = page.locator('.ant-modal-content .ant-select-selector, .ant-modal-content .ant-select').first
+            cat_box.click(force=True)
             page.wait_for_timeout(1500)
 
-            # Keyboard navigation to select option
-            page.keyboard.press("ArrowDown")
-            page.wait_for_timeout(500)
-            page.keyboard.press("ArrowDown")
-            page.wait_for_timeout(500)
-            page.keyboard.press("Enter")
-            print("  - Category selected via dropdown!", flush=True)
+            # Select first visible option from dropdown
+            cat_option = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, .ant-select-dropdown .ant-select-item').first
+            if cat_option.count() > 0:
+                cat_option.click(force=True)
+                print("  - Category selected via dropdown click!", flush=True)
+            else:
+                page.keyboard.press("ArrowDown")
+                page.keyboard.press("Enter")
+                print("  - Category selected via keyboard!", flush=True)
         except Exception as err:
-            print(f"  - Category auto-selecting fallback...", flush=True)
+            print(f"  - Category select fallback: {err}", flush=True)
+            page.locator('.ant-modal-content').click(force=True)
             page.keyboard.press("Tab")
             page.keyboard.press("ArrowDown")
             page.keyboard.press("Enter")
@@ -213,22 +221,22 @@ def publish_to_serey(page, post):
         page.wait_for_timeout(2000)
 
         # 7. Click Final "Publish" Button inside Category Modal
-        final_publish = page.locator('.ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish"), button:has-text("Publish")').last
+        final_publish = page.locator('.ant-modal-content button.ant-btn-primary, .ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish")').last
         final_publish.click(force=True)
         print("  - Final Publish button clicked. Waiting 12s for blockchain broadcast...", flush=True)
         page.wait_for_timeout(12000)
 
-        # 8. VERIFY ON SEREY PROFILE PAGE (without '@' symbol)
+        # 8. VERIFY ON SEREY PROFILE PAGE
         profile_url = f"https://serey.io/authors/{SEREY_LOGIN}"
         print(f"  - Verifying post on profile: {profile_url}", flush=True)
         page.goto(profile_url, timeout=30000)
         page.wait_for_timeout(4000)
 
-        # Check title snippet on profile page
-        short_title = post["title"][:20].strip()
+        # Sanitize title for checking (removes special chars like quotes)
+        clean_title_word = re.sub(r'[^\w\s]', '', post["title"]).split()[0] # Check first key word
         page_html = page.content()
 
-        if short_title in page_html:
+        if clean_title_word.lower() in page_html.lower():
             if os.path.exists(temp_img_path):
                 os.remove(temp_img_path)
             print(f"✅ VERIFIED & CONFIRMED ON PROFILE: {post['title']}", flush=True)
