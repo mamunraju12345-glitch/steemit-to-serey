@@ -710,8 +710,7 @@ def verify_serey_post(
                 normalized_title
                 and
                 normalized_title
-                in
-                normalized_profile
+                in normalized_profile
             ):
 
                 print(
