@@ -21,7 +21,7 @@ SEREY_PASSWORD = os.environ.get(
     "SEREY_PASSWORD",
     ""
 ).strip()
-
+PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "")
 STEEM_NODES = [
     "https://api.steemit.com",
     "https://api.justyy.com",
@@ -494,6 +494,182 @@ def get_recent_posts():
 # DOWNLOAD IMAGE
 # ============================================================
 
+def download_pixabay_image(title, body=""):
+
+    if not PIXABAY_API_KEY:
+        print(
+            "❌ PIXABAY_API_KEY not found.",
+            flush=True
+        )
+        return None
+
+    try:
+
+        # Title থেকে search keyword তৈরি
+        text = f"{title} {body[:300]}"
+
+        # URL / markdown / punctuation বাদ
+        text = re.sub(
+            r'https?://\S+',
+            '',
+            text
+        )
+
+        text = re.sub(
+            r'[#*_{}\[\]()]',
+            ' ',
+            text
+        )
+
+        words = text.split()
+
+        # খুব বড় query না পাঠিয়ে প্রথম কয়েকটি meaningful word
+        keywords = []
+
+        for word in words:
+
+            word = word.strip()
+
+            if len(word) >= 3:
+
+                if word not in keywords:
+                    keywords.append(word)
+
+            if len(keywords) >= 5:
+                break
+
+        query = " ".join(keywords)
+
+        # Pixabay সাধারণত English keyword-এ ভালো ফল দেয়।
+        # Bangla title হলে কিছু generic fallback query ব্যবহার করবে.
+        if not query or any(
+            "\u0980" <= ch <= "\u09ff"
+            for ch in query
+        ):
+
+            query = "nature beautiful"
+
+        print(
+            f"🔎 Searching Pixabay: {query}",
+            flush=True
+        )
+
+        api_url = "https://pixabay.com/api/"
+
+        params = {
+            "key": PIXABAY_API_KEY,
+            "q": query,
+            "image_type": "photo",
+            "orientation": "horizontal",
+            "safesearch": "true",
+            "per_page": 10
+        }
+
+        response = requests.get(
+            api_url,
+            params=params,
+            timeout=30
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        hits = data.get(
+            "hits",
+            []
+        )
+
+        if not hits:
+
+            print(
+                "⚠️ No Pixabay image found.",
+                flush=True
+            )
+
+            return None
+
+        # পাওয়া image-গুলো একে একে চেষ্টা করবে
+        for hit in hits:
+
+            image_url = hit.get(
+                "largeImageURL"
+            )
+
+            if not image_url:
+                continue
+
+            try:
+
+                print(
+                    f"Trying Pixabay image: "
+                    f"{image_url}",
+                    flush=True
+                )
+
+                img_response = requests.get(
+                    image_url,
+                    timeout=30,
+                    headers={
+                        "User-Agent":
+                        "Mozilla/5.0"
+                    }
+                )
+
+                img_response.raise_for_status()
+
+                content_type = (
+                    img_response
+                    .headers
+                    .get(
+                        "content-type",
+                        ""
+                    )
+                    .lower()
+                )
+
+                if not content_type.startswith(
+                    "image/"
+                ):
+                    continue
+
+                with open(
+                    TEMP_IMG_FILE,
+                    "wb"
+                ) as file:
+
+                    file.write(
+                        img_response.content
+                    )
+
+                if os.path.getsize(
+                    TEMP_IMG_FILE
+                ) > 1000:
+
+                    print(
+                        "✅ Pixabay image downloaded!",
+                        flush=True
+                    )
+
+                    return TEMP_IMG_FILE
+
+            except Exception as e:
+
+                print(
+                    f"Pixabay image failed: {e}",
+                    flush=True
+                )
+
+                continue
+
+    except Exception as e:
+
+        print(
+            f"❌ Pixabay search failed: {e}",
+            flush=True
+        )
+
+    return None
 def download_image(image_url):
 
     if not image_url:
@@ -976,51 +1152,115 @@ def verify_serey_post(
 # PUBLISH TO SEREY
 # ============================================================
 
-def publish_to_serey(
-    page,
-    post
-):
-
-    print(
-        f"\n---> Publishing to Serey: "
-        f"{post['title']}",
-        flush=True
-    )
-
+if post.get("image"):
 
     try:
 
-        page.goto(
-            "https://serey.io/blog/post/new",
-            timeout=60000
+        temp_image = download_image(
+            post["image"]
         )
 
+        # Steemit image কাজ না করলে Pixabay
+        if not temp_image:
 
-        page.wait_for_timeout(
-            4000
-        )
+            print(
+                "⚠️ Steemit image unavailable.",
+                flush=True
+            )
 
+            print(
+                "🔄 Trying Pixabay fallback...",
+                flush=True
+            )
 
-        # ----------------------------------------------------
-        # TITLE
-        # ----------------------------------------------------
+            temp_image = download_pixabay_image(
+                post["title"],
+                post.get("body", "")
+            )
 
-        title_box = page.locator(
-            'input[placeholder*="title" i], '
-            'input[placeholder*="Title"]'
-        ).first
+        if temp_image:
 
+            file_input = page.locator(
+                'input[type="file"]'
+            ).first
 
-        title_box.fill(
-            post["title"]
-        )
+            if file_input.count() > 0:
 
+                file_input.set_input_files(
+                    temp_image
+                )
+
+                print(
+                    "  - Thumbnail image uploaded!",
+                    flush=True
+                )
+
+                page.wait_for_timeout(
+                    4000
+                )
+
+            else:
+
+                print(
+                    "❌ Serey file input not found.",
+                    flush=True
+                )
+
+    except Exception as e:
 
         print(
-            "  - Title filled!",
+            f"Thumbnail processing failed: {e}",
             flush=True
         )
 
+else:
+
+    # Steemit post-এ image না থাকলেও Pixabay
+    # থেকে fallback image নেওয়ার চেষ্টা
+    try:
+
+        print(
+            "⚠️ Steemit post has no image.",
+            flush=True
+        )
+
+        print(
+            "🔄 Trying Pixabay fallback...",
+            flush=True
+        )
+
+        temp_image = download_pixabay_image(
+            post["title"],
+            post.get("body", "")
+        )
+
+        if temp_image:
+
+            file_input = page.locator(
+                'input[type="file"]'
+            ).first
+
+            if file_input.count() > 0:
+
+                file_input.set_input_files(
+                    temp_image
+                )
+
+                print(
+                    "  - Pixabay thumbnail uploaded!",
+                    flush=True
+                )
+
+                page.wait_for_timeout(
+                    4000
+                )
+
+    except Exception as e:
+
+        print(
+            f"Pixabay fallback failed: {e}",
+            flush=True
+        )
 
         # ----------------------------------------------------
         # BODY
