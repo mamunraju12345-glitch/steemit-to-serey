@@ -188,43 +188,43 @@ def publish_to_serey(page, post):
 
         page.wait_for_timeout(2000)
 
-        # 5. Click First Publish Button to Open Modal
+        # 5. Click First Publish Button
         page.locator('button:has-text("Publish")').first.click(force=True)
         print("  - First Publish button clicked!", flush=True)
-        page.wait_for_timeout(3000)
+        
+        # 6. Wait for Modal to Appear
+        page.wait_for_selector('.ant-modal-content', timeout=15000)
+        page.wait_for_timeout(2000)
 
-        # 6. Select Category inside Modal (Fixed Selector)
-        print("  - Selecting category from dropdown...", flush=True)
+        # Select Category via Keyboard Focus
+        print("  - Selecting category from modal...", flush=True)
         try:
-            modal_select = page.locator('.ant-modal-content .ant-select-selector, .ant-modal-content div[class*="select"]').first
-            modal_select.click()
-            page.wait_for_timeout(1500)
-
-            dropdown_option = page.locator('.ant-select-dropdown .ant-select-item-option').first
-            if dropdown_option.is_visible():
-                dropdown_option.click()
-            else:
-                page.keyboard.press("ArrowDown")
-                page.keyboard.press("Enter")
-
+            page.locator('.ant-modal-body').click()
+            page.wait_for_timeout(500)
+            page.keyboard.press("Tab")
+            page.wait_for_timeout(500)
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(1000)
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(500)
+            page.keyboard.press("Enter")
             print("  - Category selected successfully!", flush=True)
             page.wait_for_timeout(1500)
         except Exception as cat_err:
-            print(f"  - Category select error: {cat_err}", flush=True)
+            print(f"  - Category select warning: {cat_err}", flush=True)
 
         # 7. Click Final Blue Publish Button inside Modal
         print("  - Submitting final publish in modal...", flush=True)
-        modal_btn = page.locator('.ant-modal-content button:has-text("Publish")').last
-        modal_btn.wait_for(state="visible", timeout=10000)
-        modal_btn.click()
+        modal_btn = page.locator('.ant-modal-content button.ant-btn-primary, .ant-modal-content button:has-text("Publish")').last
+        modal_btn.click(force=True)
         
         # 8. Verification: Wait & Check Redirection
         print("  - Waiting for post transaction and redirection...", flush=True)
-        page.wait_for_timeout(10000)
+        page.wait_for_timeout(12000)
 
         if "post/new" in page.url:
             page.screenshot(path="failed_publish.png")
-            raise RuntimeError("Post failed! Page did not redirect after clicking publish.")
+            raise RuntimeError("Post failed! Browser is still on /post/new page.")
 
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
