@@ -32,6 +32,7 @@ jobs:
           STEEM_USERNAME: ${{ secrets.STEEM_USERNAME }}
           SEREY_LOGIN: ${{ secrets.SEREY_LOGIN }}
           SEREY_PASSWORD: ${{ secrets.SEREY_PASSWORD }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python steemit_to_serey.py
 
       - name: Commit and Push synced_posts.json
