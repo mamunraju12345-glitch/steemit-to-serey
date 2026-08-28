@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta, timezone
 import os
 import json
 import requests
@@ -346,15 +345,8 @@ def get_recent_posts():
 
             if post_id in seen_ids:
                 continue
-            created_str = post.get("created", "")
-            try:
-                post_date = datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-                one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
-                if post_date < one_year_ago:
-                    break
-            except Exception:
-                pass
-                
+
+
             seen_ids.add(post_id)
 
 
@@ -1267,7 +1259,37 @@ def main():
             f'{post["author"]}/'
             f'{post["permlink"]}'
         )
+from datetime import datetime, timedelta, timezone
 
+new_posts = []
+
+one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
+
+for post in posts:
+
+    post_id = (
+        f'{post["author"]}/'
+        f'{post["permlink"]}'
+    )
+
+    if post_id in synced_posts:
+        continue
+
+    try:
+        post_date = datetime.fromisoformat(
+            post["created"].replace("Z", "+00:00")
+        )
+    except Exception:
+        continue
+
+    # ১ বছর আগের পোস্ট থেকে শুরু করবে
+    if post_date >= one_year_ago:
+        new_posts.append(post)
+
+# পুরোনো পোস্ট আগে, নতুন পোস্ট পরে
+new_posts.sort(
+    key=lambda x: x["created"]
+)
 
         if post_id not in synced_posts:
 
