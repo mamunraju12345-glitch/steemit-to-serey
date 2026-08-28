@@ -608,61 +608,74 @@ def verify_serey_post(
         flush=True
     )
 
+    normalized_title = normalize_text(
+        title
+    )
 
     # --------------------------------------------------------
-    # First check current page
+    # IMPORTANT:
+    # Do NOT accept /blog/post/new as verification
     # --------------------------------------------------------
 
-    try:
+    current_url = page.url
 
-        page.wait_for_timeout(
-            5000
-        )
+    print(
+        f"Current Serey URL: {current_url}",
+        flush=True
+    )
 
-        current_url = page.url
+    if "/blog/post/new" in current_url:
 
         print(
-            f"Current Serey URL: {current_url}",
+            "⚠️ Still on the new-post page.",
             flush=True
         )
 
-
-        html = page.content()
-
-
-        normalized_html = normalize_text(
-            html
+        print(
+            "The new-post page will NOT be accepted "
+            "as published-post verification.",
+            flush=True
         )
 
-        normalized_title = normalize_text(
-            title
-        )
+    else:
 
+        try:
 
-        if (
-            normalized_title
-            and
-            normalized_title in normalized_html
-        ):
+            page.wait_for_timeout(
+                3000
+            )
+
+            html = page.content()
+
+            if (
+                normalized_title
+                and
+                normalized_title
+                in normalize_text(html)
+            ):
+
+                print(
+                    "✅ TITLE FOUND ON PUBLISHED PAGE!",
+                    flush=True
+                )
+
+                print(
+                    f"Verified URL: {page.url}",
+                    flush=True
+                )
+
+                return True
+
+        except Exception as e:
 
             print(
-                "✅ TITLE FOUND ON CURRENT SEREY PAGE!",
+                f"Current-page verification failed: {e}",
                 flush=True
             )
 
-            return True
-
-
-    except Exception as e:
-
-        print(
-            f"Current-page verification failed: {e}",
-            flush=True
-        )
-
 
     # --------------------------------------------------------
-    # Open author's profile
+    # AUTHOR PROFILE
     # --------------------------------------------------------
 
     profile_urls = [
@@ -683,39 +696,30 @@ def verify_serey_post(
                 flush=True
             )
 
-
             page.goto(
                 profile_url,
                 timeout=30000,
                 wait_until="domcontentloaded"
             )
 
-
             page.wait_for_timeout(
                 5000
             )
 
-
             profile_html = page.content()
 
-
-            normalized_profile = (
-                normalize_text(
-                    profile_html
-                )
+            normalized_profile = normalize_text(
+                profile_html
             )
-
 
             if (
                 normalized_title
                 and
-                normalized_title
-                in normalized_profile
+                normalized_title in normalized_profile
             ):
 
                 print(
-                    "✅ POST TITLE FOUND ON "
-                    "SEREY PROFILE!",
+                    "✅ POST TITLE FOUND ON SEREY PROFILE!",
                     flush=True
                 )
 
@@ -726,7 +730,6 @@ def verify_serey_post(
 
                 return True
 
-
         except Exception as e:
 
             print(
@@ -736,7 +739,7 @@ def verify_serey_post(
 
 
     # --------------------------------------------------------
-    # Search page links for matching title
+    # HOMEPAGE SEARCH
     # --------------------------------------------------------
 
     try:
@@ -746,26 +749,21 @@ def verify_serey_post(
             flush=True
         )
 
-
         page.goto(
             "https://serey.io",
             timeout=30000,
             wait_until="domcontentloaded"
         )
 
-
         page.wait_for_timeout(
             4000
         )
-
 
         links = page.locator(
             "a"
         )
 
-
         link_count = links.count()
-
 
         for i in range(
             min(link_count, 300)
@@ -779,86 +777,72 @@ def verify_serey_post(
                     timeout=1000
                 ).strip()
 
-
                 if not text:
                     continue
 
-
                 if (
-                    normalize_text(title)
-                    in
-                    normalize_text(text)
+                    normalized_title
+                    in normalize_text(text)
                 ):
 
                     href = link.get_attribute(
                         "href"
                     )
 
+                    if not href:
+                        continue
+
+                    if href.startswith("/"):
+                        href = (
+                            "https://serey.io"
+                            + href
+                        )
+
+                    # Never accept new-post page
+                    if "/blog/post/new" in href:
+                        continue
 
                     print(
-                        "✅ MATCHING POST LINK "
-                        "FOUND ON SEREY!",
+                        "✅ MATCHING PUBLISHED POST LINK FOUND!",
                         flush=True
                     )
-
 
                     print(
                         f"Link: {href}",
                         flush=True
                     )
 
+                    page.goto(
+                        href,
+                        timeout=30000,
+                        wait_until="domcontentloaded"
+                    )
 
-                    if href:
+                    page.wait_for_timeout(
+                        4000
+                    )
 
-                        if href.startswith(
-                            "/"
-                        ):
+                    post_html = page.content()
 
-                            href = (
-                                "https://serey.io"
-                                + href
-                            )
+                    if (
+                        normalized_title
+                        in normalize_text(post_html)
+                    ):
 
-
-                        page.goto(
-                            href,
-                            timeout=30000
+                        print(
+                            "✅ PUBLISHED POST PAGE VERIFIED!",
+                            flush=True
                         )
 
-
-                        page.wait_for_timeout(
-                            4000
+                        print(
+                            f"Verified URL: {page.url}",
+                            flush=True
                         )
 
-
-                        post_html = page.content()
-
-
-                        if (
-                            normalize_text(title)
-                            in
-                            normalize_text(
-                                post_html
-                            )
-                        ):
-
-                            print(
-                                "✅ POST PAGE VERIFIED!",
-                                flush=True
-                            )
-
-                            print(
-                                f"Verified URL: "
-                                f"{page.url}",
-                                flush=True
-                            )
-
-                            return True
-
+                        return True
 
             except Exception:
                 continue
-
 
     except Exception as e:
 
@@ -869,13 +853,12 @@ def verify_serey_post(
 
 
     print(
-        "❌ VERIFICATION FAILED.",
+        "❌ PUBLISHED POST COULD NOT BE VERIFIED.",
         flush=True
     )
 
     print(
-        "Post will NOT be added to "
-        "synced_posts.json.",
+        "Post will NOT be added to synced_posts.json.",
         flush=True
     )
 
@@ -1170,7 +1153,6 @@ def publish_to_serey(
             flush=True
         )
 
-
         return False
 
 
@@ -1181,7 +1163,6 @@ def publish_to_serey(
             f"on Serey: {e}",
             flush=True
         )
-
 
         return False
 
@@ -1239,11 +1220,12 @@ def main():
     )
 
 
-# --------------------------------------------------------
+    # --------------------------------------------------------
     # FETCH ALL POSTS
     # --------------------------------------------------------
 
     posts = get_recent_posts()
+
 
     # --------------------------------------------------------
     # FIND UNSYNCED (PAST 1 YEAR)
@@ -1252,44 +1234,89 @@ def main():
     from datetime import datetime, timedelta, timezone
 
     new_posts = []
-    one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
+
+    one_year_ago = (
+        datetime.now(timezone.utc)
+        - timedelta(days=365)
+    )
+
 
     for post in posts:
-        post_id = f'{post["author"]}/{post["permlink"]}'
+
+        post_id = (
+            f'{post["author"]}/'
+            f'{post["permlink"]}'
+        )
+
 
         if post_id in synced_posts:
             continue
 
+
         try:
-            post_date = datetime.fromisoformat(
-                post["created"].replace("Z", "+00:00")
+
+            created = (
+                post.get(
+                    "created",
+                    ""
+                )
+                .strip()
             )
 
-            # যদি timezone না থাকে, UTC ধরে নেওয়া হবে
-            if post_date.tzinfo is None:
-                post_date = post_date.replace(
-                    tzinfo=timezone.utc
+
+            post_date = datetime.fromisoformat(
+                created.replace(
+                    "Z",
+                    "+00:00"
                 )
-            else:
-                # timezone থাকলে UTC-তে convert করা হবে
-                post_date = post_date.astimezone(
-                    timezone.utc
+            )
+
+
+            # ------------------------------------------------
+            # FIX NAIVE DATETIME
+            # ------------------------------------------------
+
+            if post_date.tzinfo is None:
+
+                post_date = (
+                    post_date.replace(
+                        tzinfo=timezone.utc
+                    )
                 )
 
+            else:
+
+                post_date = (
+                    post_date.astimezone(
+                        timezone.utc
+                    )
+                )
+
+
         except Exception as e:
+
             print(
                 f"Invalid post date skipped: "
                 f"{post.get('created', '')} -> {e}",
                 flush=True
             )
+
             continue
 
-        # শুধুমাত্র গত ১ বছরের ভেতরের পোস্ট নেওয়া হচ্ছে
-        if post_date >= one_year_ago:
-            new_posts.append(post)
 
-    # সবচেয়ে পুরনো পোস্টটি সবার আগে আসবে (Oldest first)
-    new_posts.sort(key=lambda x: x["created"])
+        # শুধুমাত্র গত ১ বছরের পোস্ট
+        if post_date >= one_year_ago:
+
+            new_posts.append(
+                post
+            )
+
+
+    # সবচেয়ে পুরনো পোস্ট আগে
+    new_posts.sort(
+        key=lambda x: x["created"]
+    )
+
 
     print(
         f"Total posts fetched: "
@@ -1297,11 +1324,13 @@ def main():
         flush=True
     )
 
+
     print(
         f"Unsynced posts available: "
         f"{len(new_posts)}",
         flush=True
     )
+
 
     # --------------------------------------------------------
     # LIMIT POSTS PER RUN
