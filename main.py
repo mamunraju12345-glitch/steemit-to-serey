@@ -346,8 +346,7 @@ def get_recent_posts():
 
             if post_id in seen_ids:
                 continue
-
-created_str = post.get("created", "")
+            created_str = post.get("created", "")
             try:
                 post_date = datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
                 one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
