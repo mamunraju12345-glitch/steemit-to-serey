@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import os
 import json
 import requests
@@ -346,7 +347,15 @@ def get_recent_posts():
             if post_id in seen_ids:
                 continue
 
-
+created_str = post.get("created", "")
+            try:
+                post_date = datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+                one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
+                if post_date < one_year_ago:
+                    break
+            except Exception:
+                pass
+                
             seen_ids.add(post_id)
 
 
