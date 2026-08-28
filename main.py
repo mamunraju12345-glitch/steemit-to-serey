@@ -1239,71 +1239,46 @@ def main():
     )
 
 
-    # --------------------------------------------------------
+# --------------------------------------------------------
     # FETCH ALL POSTS
     # --------------------------------------------------------
 
     posts = get_recent_posts()
 
+    # --------------------------------------------------------
+    # FIND UNSYNCED (PAST 1 YEAR)
+    # --------------------------------------------------------
 
-    # --------------------------------------------------------
-    # FIND UNSYNCED
-    # --------------------------------------------------------
+    from datetime import datetime, timedelta, timezone
 
     new_posts = []
-
+    one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
 
     for post in posts:
+        post_id = f'{post["author"]}/{post["permlink"]}'
 
-        post_id = (
-            f'{post["author"]}/'
-            f'{post["permlink"]}'
-        )
-from datetime import datetime, timedelta, timezone
+        if post_id in synced_posts:
+            continue
 
-new_posts = []
-
-one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
-
-for post in posts:
-
-    post_id = (
-        f'{post["author"]}/'
-        f'{post["permlink"]}'
-    )
-
-    if post_id in synced_posts:
-        continue
-
-    try:
-        post_date = datetime.fromisoformat(
-            post["created"].replace("Z", "+00:00")
-        )
-    except Exception:
-        continue
-
-    # ১ বছর আগের পোস্ট থেকে শুরু করবে
-    if post_date >= one_year_ago:
-        new_posts.append(post)
-
-# পুরোনো পোস্ট আগে, নতুন পোস্ট পরে
-new_posts.sort(
-    key=lambda x: x["created"]
-)
-
-        if post_id not in synced_posts:
-
-            new_posts.append(
-                post
+        try:
+            post_date = datetime.fromisoformat(
+                post["created"].replace("Z", "+00:00")
             )
+        except Exception:
+            continue
 
+        # শুধুমাত্র গত ১ বছরের ভেতরের পোস্ট নেওয়া হচ্ছে
+        if post_date >= one_year_ago:
+            new_posts.append(post)
+
+    # সবচেয়ে পুরনো পোস্টটি সবার আগে আসবে (Oldest first)
+    new_posts.sort(key=lambda x: x["created"])
 
     print(
         f"Total posts fetched: "
         f"{len(posts)}",
         flush=True
     )
-
 
     print(
         f"Unsynced posts available: "
