@@ -4,7 +4,7 @@ import requests
 import time
 import re
 from datetime import datetime, timedelta, timezone
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 
 # ============================================================
@@ -37,13 +37,7 @@ STEEM_NODES = [
 DATA_FILE = "synced_posts.json"
 TEMP_IMG_FILE = "temp_thumbnail.jpg"
 
-# Debug files
-DEBUG_SCREENSHOT = "serey_debug.png"
-DEBUG_HTML = "serey_debug.html"
-
 POSTS_PER_RUN = 1
-
-# Last 2 years
 START_FROM_DAYS_AGO = 2 * 365
 
 
@@ -65,7 +59,6 @@ def steem_rpc(method, params):
     for node in STEEM_NODES:
 
         try:
-
             print(
                 f"Trying Steem RPC: {node}",
                 flush=True
@@ -77,7 +70,7 @@ def steem_rpc(method, params):
                 headers={
                     "Content-Type": "application/json"
                 },
-                timeout=20
+                timeout=30
             )
 
             response.raise_for_status()
@@ -85,9 +78,7 @@ def steem_rpc(method, params):
             data = response.json()
 
             if "error" in data:
-                raise RuntimeError(
-                    str(data["error"])
-                )
+                raise RuntimeError(str(data["error"]))
 
             return data["result"]
 
@@ -103,8 +94,7 @@ def steem_rpc(method, params):
             time.sleep(1)
 
     raise RuntimeError(
-        f"All Steem RPC nodes failed. "
-        f"Last error: {last_error}"
+        f"All Steem RPC nodes failed. Last error: {last_error}"
     )
 
 
@@ -123,9 +113,9 @@ def load_synced_posts():
             DATA_FILE,
             "r",
             encoding="utf-8"
-        ) as file:
+        ) as f:
 
-            data = json.load(file)
+            data = json.load(f)
 
         if isinstance(data, list):
             return set(data)
@@ -146,11 +136,11 @@ def save_synced_posts(posts):
         DATA_FILE,
         "w",
         encoding="utf-8"
-    ) as file:
+    ) as f:
 
         json.dump(
             sorted(posts),
-            file,
+            f,
             indent=2,
             ensure_ascii=False
         )
@@ -169,24 +159,15 @@ def extract_image_and_clean_body(
 
     try:
 
-        meta = json.loads(
-            json_metadata_str
-        )
+        meta = json.loads(json_metadata_str)
 
         if (
             isinstance(meta, dict)
-            and
-            isinstance(
-                meta.get("image"),
-                list
-            )
-            and
-            meta["image"]
+            and isinstance(meta.get("image"), list)
+            and meta["image"]
         ):
 
-            first_image_url = (
-                meta["image"][0]
-            )
+            first_image_url = meta["image"][0]
 
     except Exception:
         pass
@@ -217,14 +198,12 @@ def extract_image_and_clean_body(
 
     clean_body = body_text
 
-    # Remove markdown images
     clean_body = re.sub(
         r'!\[[^\]]*\]\([^)]+\)',
         '',
         clean_body
     )
 
-    # Remove direct image URLs
     clean_body = re.sub(
         r'https?://[^\s<>"\']+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s<>"\']*)?',
         '',
@@ -232,7 +211,6 @@ def extract_image_and_clean_body(
         flags=re.IGNORECASE
     )
 
-    # Clean excessive blank lines
     clean_body = re.sub(
         r'\n\s*\n\s*\n+',
         '\n\n',
@@ -246,19 +224,18 @@ def extract_image_and_clean_body(
 
 
 # ============================================================
-# FETCH POSTS
+# FETCH STEEM POSTS
 # ============================================================
 
 def get_recent_posts():
 
     print(
-        f"\nFetching historical posts "
-        f"from Steemit: @{STEEM_USERNAME}",
+        f"\nFetching historical posts from Steemit: "
+        f"@{STEEM_USERNAME}",
         flush=True
     )
 
     all_posts = []
-
     seen_ids = set()
 
     start_author = None
@@ -268,8 +245,7 @@ def get_recent_posts():
 
     two_years_ago = (
         datetime.now(timezone.utc)
-        -
-        timedelta(days=START_FROM_DAYS_AGO)
+        - timedelta(days=START_FROM_DAYS_AGO)
     )
 
     stop_fetching = False
@@ -316,50 +292,35 @@ def get_recent_posts():
             if post.get("author") != STEEM_USERNAME:
                 continue
 
-            author = post.get(
-                "author",
-                ""
-            )
-
-            permlink = post.get(
-                "permlink",
-                ""
-            )
+            author = post.get("author", "")
+            permlink = post.get("permlink", "")
 
             if not permlink:
                 continue
 
-            post_id = (
-                f"{author}/{permlink}"
-            )
+            post_id = f"{author}/{permlink}"
 
             if post_id in seen_ids:
                 continue
 
-            created_str = post.get(
-                "created",
-                ""
-            )
+            created_str = post.get("created", "")
 
             try:
 
-                post_created_dt = (
-                    datetime.strptime(
-                        created_str,
-                        "%Y-%m-%dT%H:%M:%S"
-                    ).replace(
-                        tzinfo=timezone.utc
-                    )
+                created_dt = datetime.strptime(
+                    created_str,
+                    "%Y-%m-%dT%H:%M:%S"
+                ).replace(
+                    tzinfo=timezone.utc
                 )
 
             except Exception:
 
-                post_created_dt = None
+                created_dt = None
 
             if (
-                post_created_dt
-                and
-                post_created_dt < two_years_ago
+                created_dt
+                and created_dt < two_years_ago
             ):
 
                 stop_fetching = True
@@ -367,15 +328,8 @@ def get_recent_posts():
 
             seen_ids.add(post_id)
 
-            raw_body = post.get(
-                "body",
-                ""
-            )
-
-            metadata = post.get(
-                "json_metadata",
-                "{}"
-            )
+            raw_body = post.get("body", "")
+            metadata = post.get("json_metadata", "{}")
 
             image_url, clean_body = (
                 extract_image_and_clean_body(
@@ -385,28 +339,14 @@ def get_recent_posts():
             )
 
             all_posts.append({
-
                 "author": author,
-
                 "permlink": permlink,
-
-                "title": post.get(
-                    "title",
-                    ""
-                ),
-
+                "title": post.get("title", ""),
                 "body": clean_body,
-
                 "image": image_url,
-
-                "category": post.get(
-                    "category",
-                    ""
-                ),
-
+                "category": post.get("category", ""),
                 "created": created_str,
-
-                "created_dt": post_created_dt
+                "created_dt": created_dt
             })
 
             added_this_batch += 1
@@ -416,13 +356,8 @@ def get_recent_posts():
 
         last_post = result[-1]
 
-        new_start_author = (
-            last_post.get("author")
-        )
-
-        new_start_permlink = (
-            last_post.get("permlink")
-        )
+        new_start_author = last_post.get("author")
+        new_start_permlink = last_post.get("permlink")
 
         if (
             new_start_author == start_author
@@ -431,11 +366,7 @@ def get_recent_posts():
         ):
             break
 
-        if (
-            added_this_batch == 0
-            and
-            not stop_fetching
-        ):
+        if added_this_batch == 0:
             break
 
         start_author = new_start_author
@@ -468,7 +399,7 @@ def get_recent_posts():
 
 
 # ============================================================
-# DOWNLOAD IMAGE
+# IMAGE DOWNLOAD
 # ============================================================
 
 def download_image(image_url):
@@ -496,10 +427,7 @@ def download_image(image_url):
 
         content_type = (
             response.headers
-            .get(
-                "content-type",
-                ""
-            )
+            .get("content-type", "")
             .lower()
         )
 
@@ -515,11 +443,9 @@ def download_image(image_url):
         with open(
             TEMP_IMG_FILE,
             "wb"
-        ) as file:
+        ) as f:
 
-            file.write(
-                response.content
-            )
+            f.write(response.content)
 
         print(
             "Image downloaded successfully!",
@@ -562,45 +488,33 @@ def normalize_text(text):
 
 
 # ============================================================
-# DEBUG SEREY PAGE
+# DEBUG
 # ============================================================
 
 def save_debug(page, name="serey_debug"):
 
     try:
 
-        screenshot_file = (
-            f"{name}.png"
-        )
-
-        html_file = (
-            f"{name}.html"
-        )
-
         page.screenshot(
-            path=screenshot_file,
+            path=f"{name}.png",
             full_page=True
         )
 
         with open(
-            html_file,
+            f"{name}.html",
             "w",
             encoding="utf-8"
-        ) as file:
+        ) as f:
 
-            file.write(
-                page.content()
-            )
+            f.write(page.content())
 
         print(
-            f"DEBUG screenshot saved: "
-            f"{screenshot_file}",
+            f"DEBUG screenshot saved: {name}.png",
             flush=True
         )
 
         print(
-            f"DEBUG HTML saved: "
-            f"{html_file}",
+            f"DEBUG HTML saved: {name}.html",
             flush=True
         )
 
@@ -613,7 +527,7 @@ def save_debug(page, name="serey_debug"):
 
 
 # ============================================================
-# GET VISIBLE MODAL
+# VISIBLE MODAL
 # ============================================================
 
 def get_visible_modal(page):
@@ -629,23 +543,15 @@ def get_visible_modal(page):
 
         try:
 
-            locator = page.locator(
-                selector
-            )
+            loc = page.locator(selector)
 
-            count = locator.count()
+            count = loc.count()
 
             for i in range(count):
 
-                item = locator.nth(i)
+                item = loc.nth(i)
 
                 if item.is_visible():
-
-                    print(
-                        f"  - Visible modal found using: "
-                        f"{selector}",
-                        flush=True
-                    )
 
                     return item
 
@@ -656,7 +562,7 @@ def get_visible_modal(page):
 
 
 # ============================================================
-# WAIT FOR MODAL
+# WAIT MODAL
 # ============================================================
 
 def wait_for_publish_modal(page):
@@ -666,221 +572,196 @@ def wait_for_publish_modal(page):
         flush=True
     )
 
-    selectors = [
-        ".ant-modal-content",
-        ".ant-modal",
-        '[role="dialog"]',
-        ".modal-content"
-    ]
-
-    for selector in selectors:
-
-        try:
-
-            page.locator(
-                selector
-            ).filter(
-                visible=True
-            ).first.wait_for(
-                state="visible",
-                timeout=10000
-            )
-
-            print(
-                f"  - Modal detected: {selector}",
-                flush=True
-            )
-
-            return True
-
-        except Exception:
-            pass
-
-    # Last fallback
-    try:
-
-        page.wait_for_timeout(2000)
+    for _ in range(20):
 
         modal = get_visible_modal(page)
 
         if modal:
-            return True
-
-    except Exception:
-        pass
-
-    return False
-
-
-# ============================================================
-# FIND CATEGORY CONTROL
-# ============================================================
-
-def find_category_control(page):
-
-    print(
-        "  - Searching for Category control...",
-        flush=True
-    )
-
-    modal = get_visible_modal(page)
-
-    if not modal:
-        print(
-            "  - No visible modal found.",
-            flush=True
-        )
-        return None
-
-    # --------------------------------------------------------
-    # 1. Ant Design select
-    # --------------------------------------------------------
-
-    selectors = [
-
-        ".ant-select-selector",
-
-        ".ant-select",
-
-        '[role="combobox"]',
-
-        'input[placeholder*="Category" i]',
-
-        'input[aria-label*="Category" i]',
-
-        'div[aria-label*="Category" i]',
-
-        'button:has-text("Category")',
-
-        'label:has-text("Category")'
-    ]
-
-    for selector in selectors:
-
-        try:
-
-            items = modal.locator(
-                selector
-            )
-
-            count = items.count()
 
             print(
-                f"    Selector {selector}: "
-                f"{count} found",
+                "  - Publish modal detected!",
                 flush=True
             )
 
-            for i in range(count):
+            return modal
 
-                item = items.nth(i)
-
-                if not item.is_visible():
-                    continue
-
-                try:
-
-                    box = item.bounding_box()
-
-                    if box:
-                        print(
-                            f"  - Category control found: "
-                            f"{selector}",
-                            flush=True
-                        )
-                        return item
-
-                except Exception:
-                    pass
-
-        except Exception:
-            continue
-
-    # --------------------------------------------------------
-    # 2. Search nearby text
-    # --------------------------------------------------------
-
-    try:
-
-        category_texts = [
-            "Category",
-            "Select Category",
-            "Choose Category",
-            "category"
-        ]
-
-        for text in category_texts:
-
-            loc = modal.get_by_text(
-                text,
-                exact=False
-            )
-
-            count = loc.count()
-
-            for i in range(count):
-
-                item = loc.nth(i)
-
-                if not item.is_visible():
-                    continue
-
-                try:
-
-                    parent = item.locator(
-                        ".."
-                    )
-
-                    # Search clickable/select inside parent
-                    for child_selector in [
-                        ".ant-select-selector",
-                        ".ant-select",
-                        "button",
-                        "input",
-                        '[role="combobox"]'
-                    ]:
-
-                        child = parent.locator(
-                            child_selector
-                        ).first
-
-                        if child.count() > 0:
-
-                            if child.is_visible():
-
-                                print(
-                                    "  - Category control "
-                                    "found near Category label!",
-                                    flush=True
-                                )
-
-                                return child
-
-                except Exception:
-                    continue
-
-    except Exception:
-        pass
+        page.wait_for_timeout(500)
 
     return None
 
 
 # ============================================================
-# SELECT CATEGORY
+# CATEGORY — NEW ROBUST METHOD
+# ============================================================
+
+def find_category_area(page, modal):
+
+    print(
+        "  - Inspecting modal for Category...",
+        flush=True
+    )
+
+    # --------------------------------------------------------
+    # First: inspect ALL visible text inside modal
+    # --------------------------------------------------------
+
+    try:
+
+        text = modal.inner_text(
+            timeout=5000
+        )
+
+        print(
+            "  - Modal text preview:",
+            flush=True
+        )
+
+        print(
+            text[:3000],
+            flush=True
+        )
+
+    except Exception:
+        pass
+
+    # --------------------------------------------------------
+    # Search elements containing category text
+    # --------------------------------------------------------
+
+    category_words = [
+        "category",
+        "categories",
+        "select category",
+        "choose category"
+    ]
+
+    for word in category_words:
+
+        try:
+
+            elements = modal.get_by_text(
+                word,
+                exact=False
+            )
+
+            count = elements.count()
+
+            print(
+                f"  - Text '{word}': {count} element(s)",
+                flush=True
+            )
+
+            for i in range(count):
+
+                el = elements.nth(i)
+
+                if not el.is_visible():
+                    continue
+
+                # Try current element
+                try:
+
+                    box = el.bounding_box()
+
+                    if box:
+
+                        print(
+                            f"  - Category text found: '{word}'",
+                            flush=True
+                        )
+
+                except Exception:
+                    pass
+
+                # Parent levels
+                for level in range(1, 6):
+
+                    try:
+
+                        parent = el
+
+                        for _ in range(level):
+                            parent = parent.locator("..")
+
+                        if not parent.is_visible():
+                            continue
+
+                        # Look for clickable elements
+                        candidates = parent.locator(
+                            "button, input, [role='button'], "
+                            "[role='combobox'], "
+                            ".ant-select, "
+                            ".ant-select-selector, "
+                            "div"
+                        )
+
+                        candidate_count = candidates.count()
+
+                        for j in range(candidate_count):
+
+                            candidate = candidates.nth(j)
+
+                            if not candidate.is_visible():
+                                continue
+
+                            try:
+
+                                box = candidate.bounding_box()
+
+                                if not box:
+                                    continue
+
+                                # Avoid returning huge parent containers
+                                width = box.get("width", 0)
+                                height = box.get("height", 0)
+
+                                if (
+                                    width > 20
+                                    and
+                                    height > 15
+                                    and
+                                    width < 1000
+                                    and
+                                    height < 300
+                                ):
+
+                                    print(
+                                        "  - Possible Category control "
+                                        f"found at parent level {level}",
+                                        flush=True
+                                    )
+
+                                    return candidate
+
+                            except Exception:
+                                continue
+
+                    except Exception:
+                        continue
+
+        except Exception:
+            continue
+
+    return None
+
+
+# ============================================================
+# CATEGORY CLICK + SELECT
 # ============================================================
 
 def select_category(page, post):
 
     print(
-        "  - Selecting Category...",
+        "\n  - Selecting Category...",
         flush=True
     )
 
-    # Wait for modal
-    if not wait_for_publish_modal(page):
+    modal = wait_for_publish_modal(page)
+
+    if not modal:
 
         print(
-            "  - Publish modal was not detected.",
+            "❌ Publish modal not found.",
             flush=True
         )
 
@@ -893,12 +774,15 @@ def select_category(page, post):
 
     page.wait_for_timeout(1000)
 
-    control = find_category_control(page)
+    control = find_category_area(
+        page,
+        modal
+    )
 
     if not control:
 
         print(
-            "  - Category control not found.",
+            "❌ Category control not found.",
             flush=True
         )
 
@@ -910,20 +794,29 @@ def select_category(page, post):
         return False
 
     # --------------------------------------------------------
-    # Click category
+    # Click
     # --------------------------------------------------------
 
     try:
 
         control.scroll_into_view_if_needed()
 
+    except Exception:
+        pass
+
+    clicked = False
+
+    try:
+
         control.click(
             force=True,
             timeout=10000
         )
 
+        clicked = True
+
         print(
-            "  - Category control clicked!",
+            "  - Category area clicked!",
             flush=True
         )
 
@@ -934,46 +827,44 @@ def select_category(page, post):
             flush=True
         )
 
+    if not clicked:
+
         try:
 
             control.evaluate(
                 "(el) => el.click()"
             )
 
+            clicked = True
+
             print(
                 "  - Category clicked using JavaScript!",
                 flush=True
             )
 
-        except Exception as js_error:
+        except Exception as e:
 
             print(
-                f"  - JavaScript click failed: "
-                f"{js_error}",
+                f"  - JavaScript click failed: {e}",
                 flush=True
             )
 
-            return False
+    if not clicked:
+        return False
 
     page.wait_for_timeout(1500)
 
     # --------------------------------------------------------
-    # Find visible dropdown
+    # Find dropdown anywhere on page
     # --------------------------------------------------------
 
     dropdown_selectors = [
-
-        ".ant-select-dropdown:not(.ant-select-dropdown-hidden)",
-
+        ".ant-select-dropdown",
         '[role="listbox"]',
-
-        ".ant-dropdown:not(.ant-dropdown-hidden)",
-
         ".ant-dropdown",
-
+        ".dropdown-menu",
         ".select-dropdown",
-
-        ".dropdown-menu"
+        "ul"
     ]
 
     dropdown = None
@@ -982,26 +873,34 @@ def select_category(page, post):
 
         try:
 
-            items = page.locator(
-                selector
-            )
+            loc = page.locator(selector)
 
-            count = items.count()
+            count = loc.count()
 
             for i in range(count):
 
-                item = items.nth(i)
+                item = loc.nth(i)
 
-                if item.is_visible():
+                if not item.is_visible():
+                    continue
 
-                    dropdown = item
+                try:
 
-                    print(
-                        f"  - Dropdown found: {selector}",
-                        flush=True
-                    )
+                    box = item.bounding_box()
 
-                    break
+                    if box:
+
+                        dropdown = item
+
+                        print(
+                            f"  - Dropdown found: {selector}",
+                            flush=True
+                        )
+
+                        break
+
+                except Exception:
+                    continue
 
             if dropdown:
                 break
@@ -1010,22 +909,18 @@ def select_category(page, post):
             continue
 
     # --------------------------------------------------------
-    # Option selection
+    # Find category options
     # --------------------------------------------------------
 
     if dropdown:
 
         option_selectors = [
-
             ".ant-select-item-option",
-
             '[role="option"]',
-
             ".ant-dropdown-menu-item",
-
             ".dropdown-item",
-
-            "li"
+            "li",
+            "button"
         ]
 
         for selector in option_selectors:
@@ -1042,12 +937,10 @@ def select_category(page, post):
                     continue
 
                 print(
-                    f"  - Found {count} category "
-                    f"option(s).",
+                    f"  - {count} dropdown option(s) found.",
                     flush=True
                 )
 
-                # Prefer actual visible options
                 for i in range(count):
 
                     option = options.nth(i)
@@ -1058,7 +951,7 @@ def select_category(page, post):
                     try:
 
                         text = option.inner_text(
-                            timeout=3000
+                            timeout=2000
                         ).strip()
 
                     except Exception:
@@ -1069,21 +962,19 @@ def select_category(page, post):
                         continue
 
                     print(
-                        f"    Category option: {text}",
+                        f"    Option: {text}",
                         flush=True
                     )
 
-                    # Click first valid option
                     try:
 
                         option.click(
                             force=True,
-                            timeout=10000
+                            timeout=8000
                         )
 
                         print(
-                            f"  - Category selected: "
-                            f"{text}",
+                            f"  ✅ Category selected: {text}",
                             flush=True
                         )
 
@@ -1091,16 +982,73 @@ def select_category(page, post):
 
                         return True
 
-                    except Exception as option_error:
-
-                        print(
-                            f"    Option click failed: "
-                            f"{option_error}",
-                            flush=True
-                        )
+                    except Exception:
+                        continue
 
             except Exception:
                 continue
+
+    # --------------------------------------------------------
+    # Generic visible option search
+    # --------------------------------------------------------
+
+    print(
+        "  - Trying generic visible category options...",
+        flush=True
+    )
+
+    try:
+
+        visible_texts = [
+            "Sports",
+            "Sport",
+            "Lifestyle",
+            "Technology",
+            "Education",
+            "News",
+            "Entertainment",
+            "Health",
+            "Travel",
+            "Other"
+        ]
+
+        for text in visible_texts:
+
+            candidates = page.get_by_text(
+                text,
+                exact=True
+            )
+
+            count = candidates.count()
+
+            for i in range(count):
+
+                candidate = candidates.nth(i)
+
+                if not candidate.is_visible():
+                    continue
+
+                try:
+
+                    candidate.click(
+                        force=True,
+                        timeout=5000
+                    )
+
+                    print(
+                        f"  ✅ Category selected: {text}",
+                        flush=True
+                    )
+
+                    page.wait_for_timeout(1000)
+
+                    return True
+
+                except Exception:
+                    continue
+
+    except Exception:
+        pass
 
     # --------------------------------------------------------
     # Keyboard fallback
@@ -1113,21 +1061,13 @@ def select_category(page, post):
 
     try:
 
-        page.keyboard.press(
-            "ArrowDown"
-        )
-
+        page.keyboard.press("ArrowDown")
         page.wait_for_timeout(300)
-
-        page.keyboard.press(
-            "Enter"
-        )
-
+        page.keyboard.press("Enter")
         page.wait_for_timeout(1000)
 
         print(
-            "  - Category selected using "
-            "keyboard fallback!",
+            "  - Category selected using keyboard.",
             flush=True
         )
 
@@ -1149,10 +1089,71 @@ def select_category(page, post):
 
 
 # ============================================================
-# FIND FINAL PUBLISH BUTTON
+# FIND PUBLISH BUTTON
 # ============================================================
 
-def find_final_publish_button(page):
+def find_publish_buttons(page, container=None):
+
+    if container is None:
+        container = page
+
+    selectors = [
+        "button",
+        '[role="button"]',
+        'input[type="submit"]'
+    ]
+
+    buttons = []
+
+    for selector in selectors:
+
+        try:
+
+            loc = container.locator(selector)
+
+            count = loc.count()
+
+            for i in range(count):
+
+                btn = loc.nth(i)
+
+                if not btn.is_visible():
+                    continue
+
+                try:
+
+                    text = btn.inner_text(
+                        timeout=1000
+                    ).strip()
+
+                except Exception:
+
+                    text = ""
+
+                if (
+                    "publish" in text.lower()
+                    or
+                    (
+                        selector.startswith("input")
+                        and
+                        "publish"
+                        in btn.get_attribute("value").lower()
+                    )
+                ):
+
+                    buttons.append(btn)
+
+        except Exception:
+            continue
+
+    return buttons
+
+
+# ============================================================
+# FINAL PUBLISH
+# ============================================================
+
+def click_final_publish(page):
 
     print(
         "  - Searching for Final Publish button...",
@@ -1162,94 +1163,30 @@ def find_final_publish_button(page):
     modal = get_visible_modal(page)
 
     if not modal:
-        print(
-            "  - No visible modal for final Publish.",
-            flush=True
-        )
-        return None
-
-    selectors = [
-
-        "button:has-text('Publish')",
-
-        "button:has-text('publish')",
-
-        '[role="button"]:has-text("Publish")',
-
-        'input[type="submit"][value*="Publish" i]'
-    ]
-
-    candidates = []
-
-    for selector in selectors:
-
-        try:
-
-            items = modal.locator(
-                selector
-            )
-
-            count = items.count()
-
-            for i in range(count):
-
-                item = items.nth(i)
-
-                if item.is_visible():
-
-                    candidates.append(item)
-
-        except Exception:
-            continue
-
-    # Remove duplicates conceptually by testing from last to first
-    for item in reversed(candidates):
-
-        try:
-
-            if not item.is_enabled():
-                continue
-
-        except Exception:
-            pass
-
-        try:
-
-            text = item.inner_text(
-                timeout=2000
-            ).strip()
-
-        except Exception:
-
-            text = ""
 
         print(
-            f"  - Candidate Publish button: "
-            f"'{text}'",
+            "❌ No visible modal.",
             flush=True
         )
 
-        return item
+        save_debug(
+            page,
+            "final_modal_missing"
+        )
 
-    return None
+        return False
 
-
-# ============================================================
-# FINAL PUBLISH
-# ============================================================
-
-def click_final_publish(page):
-
-    button = find_final_publish_button(
-        page
+    buttons = find_publish_buttons(
+        page,
+        modal
     )
 
-    if not button:
+    print(
+        f"  - Publish button candidates: {len(buttons)}",
+        flush=True
+    )
 
-        print(
-            "❌ Final Publish button not found!",
-            flush=True
-        )
+    if not buttons:
 
         save_debug(
             page,
@@ -1258,76 +1195,89 @@ def click_final_publish(page):
 
         return False
 
-    try:
+    # Last Publish button is normally final confirmation
+    for button in reversed(buttons):
 
-        button.scroll_into_view_if_needed()
-
-        page.wait_for_timeout(500)
-
-        button.click(
-            force=True,
-            timeout=15000
-        )
-
-        print(
-            "  - Final Publish button clicked!",
-            flush=True
-        )
-
-        return True
-
-    except Exception as e:
-
-        print(
-            f"  - Normal Final Publish click failed: "
-            f"{e}",
-            flush=True
-        )
-
-        # JavaScript fallback
         try:
 
-            button.evaluate(
-                "(el) => el.click()"
+            if not button.is_enabled():
+                continue
+
+        except Exception:
+            pass
+
+        try:
+
+            text = button.inner_text(
+                timeout=1000
+            ).strip()
+
+        except Exception:
+
+            text = "Publish"
+
+        print(
+            f"  - Clicking Publish button: '{text}'",
+            flush=True
+        )
+
+        try:
+
+            button.scroll_into_view_if_needed()
+
+        except Exception:
+            pass
+
+        try:
+
+            button.click(
+                force=True,
+                timeout=15000
             )
 
             print(
-                "  - Final Publish clicked using JavaScript!",
+                "  ✅ Final Publish clicked!",
                 flush=True
             )
 
             return True
 
-        except Exception as js_error:
+        except Exception as e:
 
             print(
-                f"❌ JavaScript Final Publish failed: "
-                f"{js_error}",
+                f"  - Button click failed: {e}",
                 flush=True
             )
 
-            save_debug(
-                page,
-                "final_publish_click_failed"
-            )
+            try:
 
-            return False
+                button.evaluate(
+                    "(el) => el.click()"
+                )
+
+                print(
+                    "  ✅ Final Publish clicked using JS!",
+                    flush=True
+                )
+
+                return True
+
+            except Exception:
+                continue
+
+    return False
 
 
 # ============================================================
-# CHECK SEREY ERROR TOAST
+# SEREY ERROR
 # ============================================================
 
 def check_serey_error(page):
 
     selectors = [
-
         ".ant-message-error",
-
         ".ant-notification-notice-error",
-
         ".ant-alert-error",
-
         '[role="alert"]'
     ]
 
@@ -1335,9 +1285,7 @@ def check_serey_error(page):
 
         try:
 
-            items = page.locator(
-                selector
-            )
+            items = page.locator(selector)
 
             count = items.count()
 
@@ -1351,7 +1299,7 @@ def check_serey_error(page):
                 try:
 
                     text = item.inner_text(
-                        timeout=2000
+                        timeout=1000
                     ).strip()
 
                 except Exception:
@@ -1374,7 +1322,7 @@ def check_serey_error(page):
 
 
 # ============================================================
-# VERIFY SEREY POST
+# VERIFY POST
 # ============================================================
 
 def verify_serey_post(page, post):
@@ -1400,16 +1348,15 @@ def verify_serey_post(page, post):
         flush=True
     )
 
-    # If still creation page, wait a little more
+    # If still new-post page
     if "/blog/post/new" in current_url:
 
         print(
-            "  - Still on creation page. "
-            "Waiting for redirect...",
+            "  - Waiting for redirect...",
             flush=True
         )
 
-        for _ in range(10):
+        for _ in range(15):
 
             page.wait_for_timeout(1000)
 
@@ -1421,7 +1368,7 @@ def verify_serey_post(page, post):
     if "/blog/post/new" in current_url:
 
         print(
-            "❌ FAILED: Still on /blog/post/new.",
+            "❌ Still on /blog/post/new.",
             flush=True
         )
 
@@ -1432,18 +1379,10 @@ def verify_serey_post(page, post):
 
         return False
 
-    normalized_title = normalize_text(
-        title
-    )
-
-    # --------------------------------------------------------
-    # Profile verification
-    # --------------------------------------------------------
+    normalized_title = normalize_text(title)
 
     profile_urls = [
-
         f"https://serey.io/authors/@{SEREY_LOGIN}",
-
         f"https://serey.io/authors/{SEREY_LOGIN}"
     ]
 
@@ -1462,24 +1401,14 @@ def verify_serey_post(page, post):
                 wait_until="domcontentloaded"
             )
 
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(4000)
 
-            profile_html = page.content()
+            html = page.content()
 
-            normalized_profile = normalize_text(
-                profile_html
-            )
-
-            if (
-                normalized_title
-                and
-                normalized_title
-                in normalized_profile
-            ):
+            if normalized_title in normalize_text(html):
 
                 print(
-                    "✅ POST TITLE FOUND ON "
-                    "SEREY PROFILE!",
+                    "✅ POST TITLE FOUND ON SEREY PROFILE!",
                     flush=True
                 )
 
@@ -1498,8 +1427,7 @@ def verify_serey_post(page, post):
             )
 
     print(
-        "❌ VERIFICATION FAILED. "
-        "Post was not confirmed live on Serey.",
+        "❌ Verification failed.",
         flush=True
     )
 
@@ -1507,7 +1435,7 @@ def verify_serey_post(page, post):
 
 
 # ============================================================
-# PUBLISH TO SEREY
+# PUBLISH ONE POST
 # ============================================================
 
 def publish_to_serey(page, post):
@@ -1536,33 +1464,34 @@ def publish_to_serey(page, post):
         # TITLE
         # ----------------------------------------------------
 
+        title_box = None
+
         title_selectors = [
-
-            'input[placeholder*="title" i]',
-
-            'input[placeholder*="Title" i]',
-
             'input[name="title"]',
-
+            'input[placeholder*="title" i]',
+            'input[placeholder*="Title" i]',
             'input[type="text"]'
         ]
-
-        title_box = None
 
         for selector in title_selectors:
 
             try:
 
-                locator = page.locator(
-                    selector
-                ).first
+                loc = page.locator(selector)
 
-                if locator.count() > 0:
+                count = loc.count()
 
-                    if locator.is_visible():
+                for i in range(count):
 
-                        title_box = locator
+                    item = loc.nth(i)
+
+                    if item.is_visible():
+
+                        title_box = item
                         break
+
+                if title_box:
+                    break
 
             except Exception:
                 continue
@@ -1572,8 +1501,6 @@ def publish_to_serey(page, post):
             raise RuntimeError(
                 "Title input not found."
             )
-
-        title_box.focus()
 
         title_box.fill(
             post["title"]
@@ -1592,33 +1519,34 @@ def publish_to_serey(page, post):
         # BODY
         # ----------------------------------------------------
 
+        body_box = None
+
         body_selectors = [
-
             'div[contenteditable="true"]',
-
             'textarea[placeholder*="content" i]',
-
             'textarea',
-
             '[contenteditable="true"]'
         ]
-
-        body_box = None
 
         for selector in body_selectors:
 
             try:
 
-                locator = page.locator(
-                    selector
-                ).first
+                loc = page.locator(selector)
 
-                if locator.count() > 0:
+                count = loc.count()
 
-                    if locator.is_visible():
+                for i in range(count):
 
-                        body_box = locator
+                    item = loc.nth(i)
+
+                    if item.is_visible():
+
+                        body_box = item
                         break
+
+                if body_box:
+                    break
 
             except Exception:
                 continue
@@ -1628,8 +1556,6 @@ def publish_to_serey(page, post):
             raise RuntimeError(
                 "Body editor not found."
             )
-
-        body_box.focus()
 
         body_box.fill(
             post["body"]
@@ -1644,7 +1570,7 @@ def publish_to_serey(page, post):
             flush=True
         )
 
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(1500)
 
         # ----------------------------------------------------
         # IMAGE
@@ -1660,66 +1586,51 @@ def publish_to_serey(page, post):
 
                 if temp_image:
 
-                    file_inputs = page.locator(
+                    inputs = page.locator(
                         'input[type="file"]'
                     )
 
-                    count = file_inputs.count()
+                    count = inputs.count()
 
                     print(
                         f"  - File input count: {count}",
                         flush=True
                     )
 
-                    if count > 0:
+                    uploaded = False
 
-                        uploaded = False
+                    for i in range(count):
 
-                        for i in range(count):
+                        try:
 
-                            file_input = (
-                                file_inputs.nth(i)
+                            inputs.nth(i).set_input_files(
+                                temp_image
                             )
 
-                            try:
-
-                                file_input.set_input_files(
-                                    temp_image
-                                )
-
-                                uploaded = True
-
-                                print(
-                                    "  - Thumbnail image uploaded!",
-                                    flush=True
-                                )
-
-                                break
-
-                            except Exception:
-                                continue
-
-                        if not uploaded:
+                            uploaded = True
 
                             print(
-                                "  - Could not upload image.",
+                                "  - Thumbnail image uploaded!",
                                 flush=True
                             )
 
-                        page.wait_for_timeout(
-                            4000
-                        )
+                            break
+
+                        except Exception:
+                            continue
+
+                    if uploaded:
+                        page.wait_for_timeout(4000)
 
             except Exception as e:
 
                 print(
-                    f"  - Thumbnail upload skipped: "
-                    f"{e}",
+                    f"  - Image upload skipped: {e}",
                     flush=True
                 )
 
         # ----------------------------------------------------
-        # FIRST PUBLISH BUTTON
+        # INITIAL PUBLISH
         # ----------------------------------------------------
 
         print(
@@ -1727,50 +1638,32 @@ def publish_to_serey(page, post):
             flush=True
         )
 
-        publish_selectors = [
-
-            'button:has-text("Publish")',
-
-            'button:has-text("publish")',
-
-            '[role="button"]:has-text("Publish")'
-        ]
+        buttons = find_publish_buttons(page)
 
         initial_publish = None
 
-        for selector in publish_selectors:
+        for button in buttons:
 
             try:
 
-                buttons = page.locator(
-                    selector
-                )
-
-                count = buttons.count()
-
-                for i in range(count):
-
-                    btn = buttons.nth(i)
-
-                    if not btn.is_visible():
-                        continue
-
-                    try:
-
-                        if not btn.is_enabled():
-                            continue
-
-                    except Exception:
-                        pass
-
-                    initial_publish = btn
-                    break
-
-                if initial_publish:
-                    break
+                text = button.inner_text(
+                    timeout=1000
+                ).strip()
 
             except Exception:
-                continue
+
+                text = ""
+
+            if button.is_visible():
+
+                initial_publish = button
+
+                print(
+                    f"  - Initial Publish found: '{text}'",
+                    flush=True
+                )
+
+                break
 
         if not initial_publish:
 
@@ -1783,23 +1676,11 @@ def publish_to_serey(page, post):
             timeout=15000
         )
 
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(2500)
 
-        # ----------------------------------------------------
-        # ERROR CHECK
-        # ----------------------------------------------------
-
-        error = check_serey_error(
-            page
-        )
+        error = check_serey_error(page)
 
         if error:
-
-            print(
-                "❌ Serey displayed an error "
-                "after initial Publish.",
-                flush=True
-            )
 
             save_debug(
                 page,
@@ -1812,12 +1693,7 @@ def publish_to_serey(page, post):
         # CATEGORY
         # ----------------------------------------------------
 
-        category_success = select_category(
-            page,
-            post
-        )
-
-        if not category_success:
+        if not select_category(page, post):
 
             print(
                 "❌ Category selection failed.",
@@ -1835,18 +1711,14 @@ def publish_to_serey(page, post):
         # FINAL PUBLISH
         # ----------------------------------------------------
 
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(1000)
 
         print(
             "  - Clicking Final Publish button in Modal...",
             flush=True
         )
 
-        final_success = click_final_publish(
-            page
-        )
-
-        if not final_success:
+        if not click_final_publish(page):
 
             print(
                 "❌ Final Publish failed.",
@@ -1856,7 +1728,7 @@ def publish_to_serey(page, post):
             return False
 
         # ----------------------------------------------------
-        # WAIT FOR RESULT
+        # WAIT
         # ----------------------------------------------------
 
         print(
@@ -1864,22 +1736,15 @@ def publish_to_serey(page, post):
             flush=True
         )
 
+        redirected = False
+
         for _ in range(20):
 
-            page.wait_for_timeout(
-                1000
-            )
+            page.wait_for_timeout(1000)
 
-            error = check_serey_error(
-                page
-            )
+            error = check_serey_error(page)
 
             if error:
-
-                print(
-                    "❌ Serey reported an error.",
-                    flush=True
-                )
 
                 save_debug(
                     page,
@@ -1890,16 +1755,17 @@ def publish_to_serey(page, post):
 
             if "/blog/post/new" not in page.url:
 
+                redirected = True
+
                 print(
-                    f"  - Redirected to: "
-                    f"{page.url}",
+                    f"  - Redirected to: {page.url}",
                     flush=True
                 )
 
                 break
 
         # ----------------------------------------------------
-        # VERIFICATION
+        # VERIFY
         # ----------------------------------------------------
 
         verified = verify_serey_post(
@@ -1910,8 +1776,7 @@ def publish_to_serey(page, post):
         if verified:
 
             print(
-                "\n🎉 POST SUCCESSFULLY VERIFIED "
-                "ON SEREY!",
+                "\n🎉 POST SUCCESSFULLY VERIFIED ON SEREY!",
                 flush=True
             )
 
@@ -1927,8 +1792,7 @@ def publish_to_serey(page, post):
     except Exception as e:
 
         print(
-            f"\n❌ Failed to publish post on Serey: "
-            f"{e}",
+            f"\n❌ Failed to publish post on Serey: {e}",
             flush=True
         )
 
@@ -1941,18 +1805,238 @@ def publish_to_serey(page, post):
 
     finally:
 
-        if os.path.exists(
-            TEMP_IMG_FILE
-        ):
+        if os.path.exists(TEMP_IMG_FILE):
 
             try:
-
-                os.remove(
-                    TEMP_IMG_FILE
-                )
-
+                os.remove(TEMP_IMG_FILE)
             except Exception:
                 pass
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
+def login_to_serey(page):
+
+    print(
+        "\nLogging into Serey.io...",
+        flush=True
+    )
+
+    page.goto(
+        "https://serey.io",
+        timeout=60000,
+        wait_until="domcontentloaded"
+    )
+
+    page.wait_for_timeout(4000)
+
+    print(
+        "Clicking Log in button...",
+        flush=True
+    )
+
+    login_selectors = [
+        'a:has-text("Log in")',
+        'button:has-text("Log in")',
+        'a:has-text("Log In")',
+        'button:has-text("Log In")'
+    ]
+
+    login_button = None
+
+    for selector in login_selectors:
+
+        try:
+
+            loc = page.locator(selector)
+
+            count = loc.count()
+
+            for i in range(count):
+
+                item = loc.nth(i)
+
+                if item.is_visible():
+
+                    login_button = item
+                    break
+
+            if login_button:
+                break
+
+        except Exception:
+            continue
+
+    if not login_button:
+
+        raise RuntimeError(
+            "Login button not found."
+        )
+
+    login_button.click(
+        force=True
+    )
+
+    page.wait_for_timeout(3000)
+
+    # --------------------------------------------------------
+    # Username
+    # --------------------------------------------------------
+
+    username_box = None
+
+    username_selectors = [
+        'input[name="username"]',
+        'input[placeholder*="Username" i]',
+        'input[placeholder*="username" i]'
+    ]
+
+    for selector in username_selectors:
+
+        try:
+
+            loc = page.locator(selector)
+
+            count = loc.count()
+
+            for i in range(count):
+
+                item = loc.nth(i)
+
+                if item.is_visible():
+
+                    username_box = item
+                    break
+
+            if username_box:
+                break
+
+        except Exception:
+            continue
+
+    if not username_box:
+
+        raise RuntimeError(
+            "Username input not found."
+        )
+
+    username_box.fill(
+        SEREY_LOGIN
+    )
+
+    # --------------------------------------------------------
+    # Password
+    # --------------------------------------------------------
+
+    password_box = None
+
+    password_selectors = [
+        'input[placeholder*="Private Key or Password" i]',
+        'input[placeholder*="Private Key" i]',
+        'input[type="password"]'
+    ]
+
+    for selector in password_selectors:
+
+        try:
+
+            loc = page.locator(selector)
+
+            count = loc.count()
+
+            for i in range(count):
+
+                item = loc.nth(i)
+
+                if item.is_visible():
+
+                    password_box = item
+                    break
+
+            if password_box:
+                break
+
+        except Exception:
+            continue
+
+    if not password_box:
+
+        raise RuntimeError(
+            "Password/Private Key input not found."
+        )
+
+    password_box.fill(
+        SEREY_PASSWORD
+    )
+
+    # --------------------------------------------------------
+    # Submit
+    # --------------------------------------------------------
+
+    submit_selectors = [
+        '.ant-modal-content button:has-text("Log in")',
+        '.ant-modal-content button:has-text("Log In")',
+        'button:has-text("Log in")',
+        'button:has-text("Log In")'
+    ]
+
+    submit_button = None
+
+    for selector in submit_selectors:
+
+        try:
+
+            loc = page.locator(selector)
+
+            count = loc.count()
+
+            for i in range(count):
+
+                item = loc.nth(i)
+
+                if item.is_visible():
+
+                    submit_button = item
+                    break
+
+            if submit_button:
+                break
+
+        except Exception:
+            continue
+
+    if not submit_button:
+
+        raise RuntimeError(
+            "Login submit button not found."
+        )
+
+    submit_button.click(
+        force=True
+    )
+
+    page.wait_for_timeout(7000)
+
+    print(
+        f"Current URL after login: {page.url}",
+        flush=True
+    )
+
+    # Check obvious login errors
+    error = check_serey_error(page)
+
+    if error:
+
+        raise RuntimeError(
+            f"Serey login error: {error}"
+        )
+
+    print(
+        "LOGGED INTO SEREY SUCCESSFULLY!",
+        flush=True
+    )
 
 
 # ============================================================
@@ -1976,29 +2060,14 @@ def main():
         flush=True
     )
 
-    # --------------------------------------------------------
-    # Load synced posts
-    # --------------------------------------------------------
-
-    synced_posts = (
-        load_synced_posts()
-    )
+    synced_posts = load_synced_posts()
 
     print(
-        f"Previously synced posts: "
-        f"{len(synced_posts)}",
+        f"Previously synced posts: {len(synced_posts)}",
         flush=True
     )
 
-    # --------------------------------------------------------
-    # Fetch posts
-    # --------------------------------------------------------
-
     posts = get_recent_posts()
-
-    # --------------------------------------------------------
-    # Find unsynced
-    # --------------------------------------------------------
 
     new_posts = []
 
@@ -2011,30 +2080,22 @@ def main():
 
         if post_id not in synced_posts:
 
-            new_posts.append(
-                post
-            )
+            new_posts.append(post)
 
     print(
         f"Total historical posts "
-        f"(Within last 2 years): "
-        f"{len(posts)}",
+        f"(Within last 2 years): {len(posts)}",
         flush=True
     )
 
     print(
-        f"Unsynced posts available: "
-        f"{len(new_posts)}",
+        f"Unsynced posts available: {len(new_posts)}",
         flush=True
     )
 
-    # --------------------------------------------------------
-    # Only one post per run
-    # --------------------------------------------------------
-
-    new_posts_to_run = (
-        new_posts[:POSTS_PER_RUN]
-    )
+    new_posts_to_run = new_posts[
+        :POSTS_PER_RUN
+    ]
 
     print(
         f"Publishing this run: "
@@ -2051,10 +2112,6 @@ def main():
 
         return
 
-    # --------------------------------------------------------
-    # Playwright
-    # --------------------------------------------------------
-
     with sync_playwright() as p:
 
         browser = p.chromium.launch(
@@ -2065,7 +2122,7 @@ def main():
 
             viewport={
                 "width": 1280,
-                "height": 800
+                "height": 900
             },
 
             user_agent=(
@@ -2073,254 +2130,21 @@ def main():
                 "(Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 "
                 "(KHTML, like Gecko) "
-                "Chrome/122.0.0.0 "
+                "Chrome/151.0.0.0 "
                 "Safari/537.36"
             )
         )
 
         page = context.new_page()
 
-        # ----------------------------------------------------
-        # LOGIN
-        # ----------------------------------------------------
-
-        print(
-            "\nLogging into Serey.io...",
-            flush=True
-        )
-
         try:
 
-            page.goto(
-                "https://serey.io",
-                timeout=60000,
-                wait_until="domcontentloaded"
-            )
-
-            page.wait_for_timeout(
-                4000
-            )
-
-            print(
-                "Clicking Log in button...",
-                flush=True
-            )
-
-            login_selectors = [
-
-                'a:has-text("Log in")',
-
-                'button:has-text("Log in")',
-
-                'a:has-text("Log In")',
-
-                'button:has-text("Log In")'
-            ]
-
-            login_button = None
-
-            for selector in login_selectors:
-
-                try:
-
-                    loc = page.locator(
-                        selector
-                    ).first
-
-                    if (
-                        loc.count() > 0
-                        and
-                        loc.is_visible()
-                    ):
-
-                        login_button = loc
-                        break
-
-                except Exception:
-                    continue
-
-            if not login_button:
-
-                raise RuntimeError(
-                    "Login button not found."
-                )
-
-            login_button.click(
-                force=True
-            )
-
-            page.wait_for_timeout(
-                5000
-            )
-
-            # ------------------------------------------------
-            # Username
-            # ------------------------------------------------
-
-            username_selectors = [
-
-                'input[placeholder="Username"]',
-
-                'input[placeholder*="Username" i]',
-
-                'input[name="username"]'
-            ]
-
-            username_box = None
-
-            for selector in username_selectors:
-
-                try:
-
-                    loc = page.locator(
-                        selector
-                    ).first
-
-                    if (
-                        loc.count() > 0
-                        and
-                        loc.is_visible()
-                    ):
-
-                        username_box = loc
-                        break
-
-                except Exception:
-                    continue
-
-            if not username_box:
-
-                raise RuntimeError(
-                    "Username input not found."
-                )
-
-            username_box.fill(
-                SEREY_LOGIN
-            )
-
-            # ------------------------------------------------
-            # Password / Private Key
-            # ------------------------------------------------
-
-            password_selectors = [
-
-                'input[placeholder*="Private Key or Password" i]',
-
-                'input[placeholder*="Private Key" i]',
-
-                'input[type="password"]'
-            ]
-
-            password_box = None
-
-            for selector in password_selectors:
-
-                try:
-
-                    loc = page.locator(
-                        selector
-                    ).first
-
-                    if (
-                        loc.count() > 0
-                        and
-                        loc.is_visible()
-                    ):
-
-                        password_box = loc
-                        break
-
-                except Exception:
-                    continue
-
-            if not password_box:
-
-                raise RuntimeError(
-                    "Password/Private Key input "
-                    "not found."
-                )
-
-            password_box.fill(
-                SEREY_PASSWORD
-            )
-
-            # ------------------------------------------------
-            # Login submit
-            # ------------------------------------------------
-
-            login_submit_selectors = [
-
-                '.ant-modal-content button:has-text("Log in")',
-
-                '.ant-modal-content button:has-text("Log In")',
-
-                'button:has-text("Log in")',
-
-                'button:has-text("Log In")'
-            ]
-
-            login_submit = None
-
-            for selector in login_submit_selectors:
-
-                try:
-
-                    buttons = page.locator(
-                        selector
-                    )
-
-                    count = buttons.count()
-
-                    for i in range(count):
-
-                        btn = buttons.nth(i)
-
-                        if btn.is_visible():
-
-                            login_submit = btn
-                            break
-
-                    if login_submit:
-                        break
-
-                except Exception:
-                    continue
-
-            if not login_submit:
-
-                raise RuntimeError(
-                    "Login submit button not found."
-                )
-
-            login_submit.click(
-                force=True
-            )
-
-            page.wait_for_timeout(
-                7000
-            )
-
-            # ------------------------------------------------
-            # Login verification
-            # ------------------------------------------------
-
-            current_url = page.url
-
-            print(
-                f"Current URL after login: "
-                f"{current_url}",
-                flush=True
-            )
-
-            print(
-                "LOGGED INTO SEREY SUCCESSFULLY!",
-                flush=True
-            )
+            login_to_serey(page)
 
         except Exception as e:
 
             print(
-                f"Login failed: {e}",
+                f"❌ Login failed: {e}",
                 flush=True
             )
 
@@ -2334,7 +2158,7 @@ def main():
             return
 
         # ----------------------------------------------------
-        # PUBLISH POSTS
+        # PUBLISH
         # ----------------------------------------------------
 
         for post in new_posts_to_run:
@@ -2360,8 +2184,7 @@ def main():
                 )
 
                 print(
-                    f"✅ Saved as synced: "
-                    f"{post_id}",
+                    f"✅ Saved as synced: {post_id}",
                     flush=True
                 )
 
@@ -2374,8 +2197,7 @@ def main():
 
                 print(
                     "It will remain UNSYNCED "
-                    "and can be retried on "
-                    "the next run.",
+                    "and can be retried on the next run.",
                     flush=True
                 )
 
