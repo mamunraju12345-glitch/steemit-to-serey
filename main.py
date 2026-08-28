@@ -3,7 +3,6 @@ import json
 import requests
 import time
 import re
-from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 
 
@@ -248,7 +247,7 @@ def extract_image_and_clean_body(
 def get_recent_posts():
 
     print(
-        f"\nFetching posts from the LAST 1 YEAR "
+        f"\nFetching ALL historical posts "
         f"from Steemit: @{STEEM_USERNAME}",
         flush=True
     )
@@ -262,19 +261,6 @@ def get_recent_posts():
 
     page_number = 0
 
-    # --------------------------------------------------------
-    # LAST 1 YEAR CUTOFF
-    # --------------------------------------------------------
-
-    cutoff_date = (
-        datetime.now(timezone.utc)
-        - timedelta(days=365)
-    )
-
-    print(
-        f"Only posts after: {cutoff_date.isoformat()}",
-        flush=True
-    )
 
     while True:
 
@@ -283,22 +269,27 @@ def get_recent_posts():
             "limit": 100
         }
 
+
         if start_author and start_permlink:
 
             params["start_author"] = start_author
             params["start_permlink"] = start_permlink
 
+
         page_number += 1
+
 
         print(
             f"Fetching Steemit batch #{page_number}...",
             flush=True
         )
 
+
         result = steem_rpc(
             "condenser_api.get_discussions_by_blog",
             params
         )
+
 
         if not result:
 
@@ -309,6 +300,7 @@ def get_recent_posts():
 
             break
 
+
         if start_author and start_permlink:
 
             batch = result[1:]
@@ -317,63 +309,19 @@ def get_recent_posts():
 
             batch = result
 
+
         if not batch:
             break
 
+
         added_this_batch = 0
 
-        reached_old_posts = False
 
         for post in batch:
 
             if post.get("author") != STEEM_USERNAME:
                 continue
 
-            # ------------------------------------------------
-            # CHECK POST DATE
-            # ------------------------------------------------
-
-            created_str = post.get(
-                "created",
-                ""
-            )
-
-            try:
-
-                created_date = (
-                    datetime.strptime(
-                        created_str,
-                        "%Y-%m-%dT%H:%M:%S"
-                    ).replace(
-                        tzinfo=timezone.utc
-                    )
-                )
-
-            except Exception:
-
-                print(
-                    f"Could not parse post date: "
-                    f"{created_str}",
-                    flush=True
-                )
-
-                continue
-
-            # ------------------------------------------------
-            # STOP WHEN POSTS ARE OLDER THAN 1 YEAR
-            # ------------------------------------------------
-
-            if created_date < cutoff_date:
-
-                print(
-                    f"Reached posts older than 1 year: "
-                    f"{created_str}",
-                    flush=True
-                )
-
-                reached_old_posts = True
-
-                break
 
             author = post.get(
                 "author",
@@ -385,27 +333,34 @@ def get_recent_posts():
                 ""
             )
 
+
             if not permlink:
                 continue
+
 
             post_id = (
                 f"{author}/{permlink}"
             )
 
+
             if post_id in seen_ids:
                 continue
 
+
             seen_ids.add(post_id)
+
 
             raw_body = post.get(
                 "body",
                 ""
             )
 
+
             metadata = post.get(
                 "json_metadata",
                 "{}"
             )
+
 
             image_url, clean_body = (
                 extract_image_and_clean_body(
@@ -413,6 +368,7 @@ def get_recent_posts():
                     metadata
                 )
             )
+
 
             all_posts.append({
 
@@ -434,11 +390,16 @@ def get_recent_posts():
                     ""
                 ),
 
-                "created": created_str
+                "created": post.get(
+                    "created",
+                    ""
+                )
 
             })
 
+
             added_this_batch += 1
+
 
         print(
             f"Batch #{page_number}: "
@@ -448,21 +409,9 @@ def get_recent_posts():
             flush=True
         )
 
-        # ----------------------------------------------------
-        # STOP PAGINATION AFTER REACHING 1-YEAR CUTOFF
-        # ----------------------------------------------------
-
-        if reached_old_posts:
-
-            print(
-                "Stopped fetching because "
-                "posts are now older than 1 year.",
-                flush=True
-            )
-
-            break
 
         last_post = result[-1]
+
 
         new_start_author = (
             last_post.get("author")
@@ -471,6 +420,7 @@ def get_recent_posts():
         new_start_permlink = (
             last_post.get("permlink")
         )
+
 
         if (
             new_start_author == start_author
@@ -486,6 +436,7 @@ def get_recent_posts():
 
             break
 
+
         if added_this_batch == 0:
 
             print(
@@ -496,8 +447,20 @@ def get_recent_posts():
 
             break
 
+
         start_author = new_start_author
         start_permlink = new_start_permlink
+
+
+        if len(all_posts) >= 5000:
+
+            print(
+                "Reached 5000-post safety limit.",
+                flush=True
+            )
+
+            break
+
 
         if len(result) < 100:
 
@@ -509,15 +472,19 @@ def get_recent_posts():
 
             break
 
+
         time.sleep(0.3)
+
 
     all_posts.reverse()
 
+
     print(
-        f"\nTotal posts from last 1 year: "
+        f"\nTotal historical posts fetched: "
         f"{len(all_posts)}",
         flush=True
     )
+
 
     return all_posts
 
@@ -631,12 +598,8 @@ def verify_serey_post(
 
     title = post["title"].strip()
 
-    normalized_title = normalize_text(
-        title
-    )
-
     print(
-        "\n🔎 VERIFYING ACTUAL PUBLISHED POST ON SEREY...",
+        "\n🔎 VERIFYING POST ON SEREY...",
         flush=True
     )
 
@@ -645,79 +608,58 @@ def verify_serey_post(
         flush=True
     )
 
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # /blog/post/new is NOT a published post.
-    # Never verify success on that page.
-    # --------------------------------------------------------
-
-    current_url = page.url
-
-    print(
-        f"Current Serey URL: {current_url}",
-        flush=True
-    )
 
     # --------------------------------------------------------
-    # Check if current URL is an actual author post URL
-    # Example:
-    # https://serey.io/authors/mamun/n403kkem-c80icfw8tr-anrjqeen4
+    # First check current page
     # --------------------------------------------------------
 
-    if re.match(
-        r"^https://serey\.io/authors/[^/]+/[^/?#]+",
-        current_url
-    ):
+    try:
 
-        try:
+        page.wait_for_timeout(
+            5000
+        )
 
-            page.wait_for_timeout(
-                5000
-            )
+        current_url = page.url
 
-            html = page.content()
+        print(
+            f"Current Serey URL: {current_url}",
+            flush=True
+        )
 
-            normalized_html = normalize_text(
-                html
-            )
 
-            if (
-                normalized_title
-                and
-                normalized_title in normalized_html
-            ):
+        html = page.content()
 
-                print(
-                    "✅ ACTUAL SEREY POST PAGE VERIFIED!",
-                    flush=True
-                )
 
-                print(
-                    f"Published URL: {current_url}",
-                    flush=True
-                )
+        normalized_html = normalize_text(
+            html
+        )
 
-                return True
+        normalized_title = normalize_text(
+            title
+        )
 
-        except Exception as e:
+
+        if (
+            normalized_title
+            and
+            normalized_title in normalized_html
+        ):
 
             print(
-                f"Current post verification failed: {e}",
+                "✅ TITLE FOUND ON CURRENT SEREY PAGE!",
                 flush=True
             )
 
-    else:
+            return True
+
+
+    except Exception as e:
 
         print(
-            "⚠️ Current URL is NOT an actual "
-            "published post URL.",
+            f"Current-page verification failed: {e}",
             flush=True
         )
 
-        print(
-            "It will NOT be considered verified.",
-            flush=True
-        )
 
     # --------------------------------------------------------
     # Open author's profile
@@ -731,14 +673,16 @@ def verify_serey_post(
 
     ]
 
+
     for profile_url in profile_urls:
 
         try:
 
             print(
-                f"Checking author profile: {profile_url}",
+                f"Checking profile: {profile_url}",
                 flush=True
             )
+
 
             page.goto(
                 profile_url,
@@ -746,134 +690,42 @@ def verify_serey_post(
                 wait_until="domcontentloaded"
             )
 
+
             page.wait_for_timeout(
-                6000
+                5000
             )
+
 
             profile_html = page.content()
 
-            normalized_profile = normalize_text(
-                profile_html
+
+            normalized_profile = (
+                normalize_text(
+                    profile_html
+                )
             )
 
-            # ------------------------------------------------
-            # Title found on profile
-            # ------------------------------------------------
 
             if (
                 normalized_title
                 and
-                normalized_title in normalized_profile
+                normalized_title
+                in normalized_profile
             ):
 
                 print(
                     "✅ POST TITLE FOUND ON "
-                    "SEREY AUTHOR PROFILE!",
+                    "SEREY PROFILE!",
                     flush=True
                 )
 
-                # ------------------------------------------------
-                # Find the actual post link
-                # ------------------------------------------------
-
-                links = page.locator(
-                    "a"
+                print(
+                    f"Verified URL: {profile_url}",
+                    flush=True
                 )
 
-                link_count = links.count()
+                return True
 
-                for i in range(
-                    min(link_count, 500)
-                ):
-
-                    try:
-
-                        link = links.nth(i)
-
-                        text = link.inner_text(
-                            timeout=1000
-                        ).strip()
-
-                        href = link.get_attribute(
-                            "href"
-                        )
-
-                        if not text or not href:
-                            continue
-
-                        if (
-                            normalized_title
-                            in normalize_text(text)
-                        ):
-
-                            # Convert relative URL
-                            if href.startswith(
-                                "/"
-                            ):
-
-                                href = (
-                                    "https://serey.io"
-                                    + href
-                                )
-
-                            # ------------------------------------------------
-                            # ONLY accept /authors/USERNAME/POST-ID
-                            # ------------------------------------------------
-
-                            if re.match(
-                                r"^https://serey\.io/authors/[^/]+/[^/?#]+",
-                                href
-                            ):
-
-                                print(
-                                    "✅ ACTUAL POST LINK FOUND!",
-                                    flush=True
-                                )
-
-                                print(
-                                    f"Post URL: {href}",
-                                    flush=True
-                                )
-
-                                page.goto(
-                                    href,
-                                    timeout=30000,
-                                    wait_until="domcontentloaded"
-                                )
-
-                                page.wait_for_timeout(
-                                    5000
-                                )
-
-                                post_html = page.content()
-
-                                normalized_post = (
-                                    normalize_text(
-                                        post_html
-                                    )
-                                )
-
-                                if (
-                                    normalized_title
-                                    and
-                                    normalized_title
-                                    in normalized_post
-                                ):
-
-                                    print(
-                                        "✅ ACTUAL POST PAGE VERIFIED!",
-                                        flush=True
-                                    )
-
-                                    print(
-                                        f"Verified URL: {page.url}",
-                                        flush=True
-                                    )
-
-                                    return True
-
-                    except Exception:
-                        continue
 
         except Exception as e:
 
@@ -882,17 +734,18 @@ def verify_serey_post(
                 flush=True
             )
 
+
     # --------------------------------------------------------
-    # Search Serey homepage links
+    # Search page links for matching title
     # --------------------------------------------------------
 
     try:
 
         print(
-            "Searching Serey homepage for actual "
-            "published post...",
+            "Searching visible Serey links...",
             flush=True
         )
+
 
         page.goto(
             "https://serey.io",
@@ -900,18 +753,22 @@ def verify_serey_post(
             wait_until="domcontentloaded"
         )
 
+
         page.wait_for_timeout(
-            6000
+            4000
         )
+
 
         links = page.locator(
             "a"
         )
 
+
         link_count = links.count()
 
+
         for i in range(
-            min(link_count, 500)
+            min(link_count, 300)
         ):
 
             try:
@@ -922,109 +779,109 @@ def verify_serey_post(
                     timeout=1000
                 ).strip()
 
-                href = link.get_attribute(
-                    "href"
-                )
 
-                if not text or not href:
+                if not text:
                     continue
+
 
                 if (
-                    normalized_title
-                    not in normalize_text(text)
-                ):
-                    continue
-
-                if href.startswith(
-                    "/"
+                    normalize_text(title)
+                    in
+                    normalize_text(text)
                 ):
 
-                    href = (
-                        "https://serey.io"
-                        + href
+                    href = link.get_attribute(
+                        "href"
                     )
 
-                # ------------------------------------------------
-                # IMPORTANT:
-                # Only actual author post URLs are valid.
-                # ------------------------------------------------
-
-                if not re.match(
-                    r"^https://serey\.io/authors/[^/]+/[^/?#]+",
-                    href
-                ):
-
-                    continue
-
-                print(
-                    "✅ ACTUAL SEREY POST LINK FOUND!",
-                    flush=True
-                )
-
-                print(
-                    f"Post URL: {href}",
-                    flush=True
-                )
-
-                page.goto(
-                    href,
-                    timeout=30000,
-                    wait_until="domcontentloaded"
-                )
-
-                page.wait_for_timeout(
-                    5000
-                )
-
-                post_html = page.content()
-
-                normalized_post = normalize_text(
-                    post_html
-                )
-
-                if (
-                    normalized_title
-                    and
-                    normalized_title in normalized_post
-                ):
 
                     print(
-                        "✅ POST PAGE VERIFIED!",
+                        "✅ MATCHING POST LINK "
+                        "FOUND ON SEREY!",
                         flush=True
                     )
 
+
                     print(
-                        f"Verified URL: {page.url}",
+                        f"Link: {href}",
                         flush=True
                     )
 
-                    return True
+
+                    if href:
+
+                        if href.startswith(
+                            "/"
+                        ):
+
+                            href = (
+                                "https://serey.io"
+                                + href
+                            )
+
+
+                        page.goto(
+                            href,
+                            timeout=30000
+                        )
+
+
+                        page.wait_for_timeout(
+                            4000
+                        )
+
+
+                        post_html = page.content()
+
+
+                        if (
+                            normalize_text(title)
+                            in
+                            normalize_text(
+                                post_html
+                            )
+                        ):
+
+                            print(
+                                "✅ POST PAGE VERIFIED!",
+                                flush=True
+                            )
+
+                            print(
+                                f"Verified URL: "
+                                f"{page.url}",
+                                flush=True
+                            )
+
+                            return True
+
 
             except Exception:
                 continue
 
+
     except Exception as e:
 
         print(
-            f"Homepage search failed: {e}",
+            f"Link search failed: {e}",
             flush=True
         )
 
-    # --------------------------------------------------------
-    # FINAL FAILURE
-    # --------------------------------------------------------
 
     print(
-        "❌ ACTUAL PUBLISHED POST COULD NOT BE VERIFIED.",
+        "❌ VERIFICATION FAILED.",
         flush=True
     )
 
     print(
-        "Post will NOT be added to synced_posts.json.",
+        "Post will NOT be added to "
+        "synced_posts.json.",
         flush=True
     )
 
     return False
+
+
 # ============================================================
 # PUBLISH TO SEREY
 # ============================================================
