@@ -22,10 +22,12 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
 
       - name: Install Playwright browser
-        run: playwright install --with-deps chromium
+        run: |
+          playwright install --with-deps chromium
 
       - name: Run Steemit to Serey script
         env:
@@ -33,13 +35,15 @@ jobs:
           SEREY_LOGIN: ${{ secrets.SEREY_LOGIN }}
           SEREY_PASSWORD: ${{ secrets.SEREY_PASSWORD }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-        run: python steemit_to_serey.py
+        run: |
+          python steemit_to_serey.py
 
       - name: Commit and Push synced_posts.json
         if: always()
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action Bot"
+
           if [ -f synced_posts.json ]; then
             git add synced_posts.json
             git commit -m "Update synced_posts.json [skip ci]" || echo "No changes"
