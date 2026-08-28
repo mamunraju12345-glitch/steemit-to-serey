@@ -563,40 +563,7 @@ def download_image(image_url):
 
         return None
 
-def download_pexels_image(post_title, category=""):
-    print("\n🔄 Steem-এ ছবি নেই/ব্যর্থ হয়েছে, Pexels থেকে ছবি আনা হচ্ছে...", flush=True)
-    
-    # সার্চের জন্য ইংরেজি শব্দ খোঁজা
-    clean_words = re.findall(r'[a-zA-Z]{3,}', post_title)
-    query = clean_words[0] if clean_words else (category if category else "nature")
 
-    img_url = None
-    if PEXELS_API_KEY:
-        try:
-            headers = {"Authorization": PEXELS_API_KEY}
-            api_url = f"https://api.pexels.com/v1/search?query={query}&per_page=1"
-            res = requests.get(api_url, headers=headers, timeout=15)
-            if res.status_code == 200:
-                data = res.json()
-                if data.get("photos"):
-                    img_url = data["photos"][0]["src"]["large"]
-        except Exception:
-            pass
-
-    if not img_url:
-        img_url = "https://picsum.photos/800/600"
-
-    try:
-        res = requests.get(img_url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
-        res.raise_for_status()
-        with open(TEMP_IMG_FILE, "wb") as f:
-            f.write(res.content)
-        print("✅ Pexels/Fallback ছবি ডাউনলোড সফল!", flush=True)
-        return TEMP_IMG_FILE
-    except Exception as e:
-        print(f"❌ Fallback ছবি ডাউনলোড ব্যর্থ: {e}", flush=True)
-        return None
-        
 # ============================================================
 # NORMALIZE TITLE FOR VERIFICATION
 # ============================================================
@@ -991,76 +958,60 @@ def publish_to_serey(
             2000
         )
 
-# ----------------------------------------------------
+
+        # ----------------------------------------------------
         # IMAGE
         # ----------------------------------------------------
 
-        temp_image = None
-
         if post.get("image"):
-            temp_image = download_image(post["image"])
 
-        # Fallback if no image found or download fails
-        if not temp_image:
             try:
-                print(
-                    "  - No Steem image found or download failed. Fetching fallback image...",
-                    flush=True
+
+                temp_image = download_image(
+                    post["image"]
                 )
 
-                fallback_url = "https://picsum.photos/800/600"
-                res = requests.get(
-                    fallback_url,
-                    timeout=20,
-                    headers={"User-Agent": "Mozilla/5.0"}
-                )
 
-                if res.status_code == 200:
-                    with open(TEMP_IMG_FILE, "wb") as f:
-                        f.write(res.content)
-                    temp_image = TEMP_IMG_FILE
-                    print(
-                        "  - Fallback image downloaded successfully!",
-                        flush=True
-                    )
+                if temp_image:
+
+                    file_input = page.locator(
+                        'input[type="file"]'
+                    ).first
+
+
+                    if file_input.count() > 0:
+
+                        file_input.set_input_files(
+                            temp_image
+                        )
+
+
+                        print(
+                            "  - Thumbnail image uploaded!",
+                            flush=True
+                        )
+
+
+                        page.wait_for_timeout(
+                            4000
+                        )
+
+                    else:
+
+                        print(
+                            "  - File input not found.",
+                            flush=True
+                        )
+
 
             except Exception as e:
-                print(
-                    f"  - Fallback image download error: {e}",
-                    flush=True
-                )
 
-        if temp_image:
-            try:
-                file_input = page.locator(
-                    'input[type="file"]'
-                ).first
-
-                if file_input.count() > 0:
-                    file_input.set_input_files(
-                        temp_image
-                    )
-
-                    print(
-                        "  - Thumbnail image uploaded!",
-                        flush=True
-                    )
-
-                    page.wait_for_timeout(
-                        4000
-                    )
-
-                else:
-                    print(
-                        "  - File input not found.",
-                        flush=True
-                    )
-
-            except Exception as e:
                 print(
                     f"  - Thumbnail upload skipped: {e}",
                     flush=True
                 )
+
+
         # ----------------------------------------------------
         # FIRST PUBLISH
         # ----------------------------------------------------
