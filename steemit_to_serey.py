@@ -479,7 +479,7 @@ def verify_serey_post(page, post):
 
 
 # ============================================================
-# PUBLISH TO SEREY
+# PUBLISH TO SEREY (FIXED CATEGORY POPUP CLICK)
 # ============================================================
 
 def publish_to_serey(page, post):
@@ -490,7 +490,7 @@ def publish_to_serey(page, post):
         page.goto("https://serey.io/blog/post/new", timeout=60000)
         page.wait_for_timeout(4000)
 
-        # TITLE (With input event trigger)
+        # TITLE
         title_box = page.locator(
             'input[placeholder*="title" i], input[placeholder*="Title"]'
         ).first
@@ -499,7 +499,7 @@ def publish_to_serey(page, post):
         title_box.dispatch_event("input")
         print("  - Title filled!", flush=True)
 
-        # BODY (With input event trigger)
+        # BODY
         body_box = page.locator(
             'div[contenteditable="true"], textarea[placeholder*="content" i], textarea'
         ).first
@@ -528,21 +528,24 @@ def publish_to_serey(page, post):
         page.locator('button:has-text("Publish")').first.click(force=True)
         page.wait_for_timeout(4000)
 
-        # CATEGORY SELECTION (Ant Design DOM Click Fix)
+        # CATEGORY SELECTION (DIRECT DROPDOWN POPUP CLICK)
         print("  - Selecting Category...", flush=True)
         try:
-            dropdown = page.locator('.ant-modal-body .ant-select, .ant-select-selector').first
-            dropdown.click(force=True)
+            # Click modal dropdown box
+            modal_select = page.locator('.ant-modal-body .ant-select, .ant-modal .ant-select-selector').first
+            modal_select.click(force=True)
             page.wait_for_timeout(1500)
 
-            option = page.locator('.ant-select-dropdown .ant-select-item-option').first
-            if option.is_visible():
-                option.click(force=True)
-                print("  - Category option clicked directly!", flush=True)
+            # Find visible popup option in DOM
+            dropdown_popup = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden)')
+            if dropdown_popup.count() > 0 and dropdown_popup.is_visible():
+                opt = dropdown_popup.locator('.ant-select-item-option').first
+                opt.click(force=True)
+                print("  - Category option clicked directly from popup!", flush=True)
             else:
                 page.keyboard.press("ArrowDown")
                 page.keyboard.press("Enter")
-                print("  - Category selected via keyboard!", flush=True)
+                print("  - Category selected via keyboard fallback!", flush=True)
         except Exception as cat_err:
             print(f"  - Category select error: {cat_err}", flush=True)
             page.keyboard.press("ArrowDown")
@@ -550,16 +553,19 @@ def publish_to_serey(page, post):
 
         page.wait_for_timeout(2000)
 
-        # FINAL PUBLISH CLICK
+        # FINAL PUBLISH CLICK IN MODAL
         print("  - Clicking Final Publish button in Modal...", flush=True)
-        modal_publish_btn = page.locator('.ant-modal-content button, .ant-modal-footer button').filter(
-            has_text=re.compile(r"^Publish$", re.I)
+        modal_btn = page.locator(
+            '.ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish")'
         ).last
-        
-        if modal_publish_btn.count() > 0:
-            modal_publish_btn.click(force=True)
-        else:
-            page.locator('button:has-text("Publish")').last.click(force=True)
+        modal_btn.click(force=True)
+
+        page.wait_for_timeout(3000)
+
+        # CHECK FOR SEREY ERROR TOAST
+        error_notice = page.locator('.ant-message-error, .ant-notification-notice-error').first
+        if error_notice.count() > 0 and error_notice.is_visible():
+            print(f"  - SEREY SCREEN ERROR: {error_notice.inner_text()}", flush=True)
 
         print("  - Final Publish button clicked! Waiting for page redirect...", flush=True)
 
@@ -567,10 +573,10 @@ def publish_to_serey(page, post):
         for _ in range(15):
             page.wait_for_timeout(1000)
             if "/blog/post/new" not in page.url:
-                print(f"  - Redirected to: {page.url}", flush=True)
+                print(f"  - Redirected successfully to: {page.url}", flush=True)
                 break
 
-        # ACCURATE VERIFICATION
+        # VERIFICATION
         verified = verify_serey_post(page, post)
         return verified
 
