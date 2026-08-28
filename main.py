@@ -1264,7 +1264,24 @@ def main():
             post_date = datetime.fromisoformat(
                 post["created"].replace("Z", "+00:00")
             )
-        except Exception:
+
+            # যদি timezone না থাকে, UTC ধরে নেওয়া হবে
+            if post_date.tzinfo is None:
+                post_date = post_date.replace(
+                    tzinfo=timezone.utc
+                )
+            else:
+                # timezone থাকলে UTC-তে convert করা হবে
+                post_date = post_date.astimezone(
+                    timezone.utc
+                )
+
+        except Exception as e:
+            print(
+                f"Invalid post date skipped: "
+                f"{post.get('created', '')} -> {e}",
+                flush=True
+            )
             continue
 
         # শুধুমাত্র গত ১ বছরের ভেতরের পোস্ট নেওয়া হচ্ছে
@@ -1285,7 +1302,6 @@ def main():
         f"{len(new_posts)}",
         flush=True
     )
-
 
     # --------------------------------------------------------
     # LIMIT POSTS PER RUN
