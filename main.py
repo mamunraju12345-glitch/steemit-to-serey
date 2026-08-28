@@ -3,6 +3,7 @@ import json
 import requests
 import time
 import re
+from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 
 
@@ -247,7 +248,7 @@ def extract_image_and_clean_body(
 def get_recent_posts():
 
     print(
-        f"\nFetching ALL historical posts "
+        f"\nFetching posts from the LAST 1 YEAR "
         f"from Steemit: @{STEEM_USERNAME}",
         flush=True
     )
@@ -261,6 +262,19 @@ def get_recent_posts():
 
     page_number = 0
 
+    # --------------------------------------------------------
+    # LAST 1 YEAR CUTOFF
+    # --------------------------------------------------------
+
+    cutoff_date = (
+        datetime.now(timezone.utc)
+        - timedelta(days=365)
+    )
+
+    print(
+        f"Only posts after: {cutoff_date.isoformat()}",
+        flush=True
+    )
 
     while True:
 
@@ -269,27 +283,22 @@ def get_recent_posts():
             "limit": 100
         }
 
-
         if start_author and start_permlink:
 
             params["start_author"] = start_author
             params["start_permlink"] = start_permlink
 
-
         page_number += 1
-
 
         print(
             f"Fetching Steemit batch #{page_number}...",
             flush=True
         )
 
-
         result = steem_rpc(
             "condenser_api.get_discussions_by_blog",
             params
         )
-
 
         if not result:
 
@@ -300,7 +309,6 @@ def get_recent_posts():
 
             break
 
-
         if start_author and start_permlink:
 
             batch = result[1:]
@@ -309,19 +317,63 @@ def get_recent_posts():
 
             batch = result
 
-
         if not batch:
             break
 
-
         added_this_batch = 0
 
+        reached_old_posts = False
 
         for post in batch:
 
             if post.get("author") != STEEM_USERNAME:
                 continue
 
+            # ------------------------------------------------
+            # CHECK POST DATE
+            # ------------------------------------------------
+
+            created_str = post.get(
+                "created",
+                ""
+            )
+
+            try:
+
+                created_date = (
+                    datetime.strptime(
+                        created_str,
+                        "%Y-%m-%dT%H:%M:%S"
+                    ).replace(
+                        tzinfo=timezone.utc
+                    )
+                )
+
+            except Exception:
+
+                print(
+                    f"Could not parse post date: "
+                    f"{created_str}",
+                    flush=True
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # STOP WHEN POSTS ARE OLDER THAN 1 YEAR
+            # ------------------------------------------------
+
+            if created_date < cutoff_date:
+
+                print(
+                    f"Reached posts older than 1 year: "
+                    f"{created_str}",
+                    flush=True
+                )
+
+                reached_old_posts = True
+
+                break
 
             author = post.get(
                 "author",
@@ -333,34 +385,27 @@ def get_recent_posts():
                 ""
             )
 
-
             if not permlink:
                 continue
-
 
             post_id = (
                 f"{author}/{permlink}"
             )
 
-
             if post_id in seen_ids:
                 continue
 
-
             seen_ids.add(post_id)
-
 
             raw_body = post.get(
                 "body",
                 ""
             )
 
-
             metadata = post.get(
                 "json_metadata",
                 "{}"
             )
-
 
             image_url, clean_body = (
                 extract_image_and_clean_body(
@@ -368,7 +413,6 @@ def get_recent_posts():
                     metadata
                 )
             )
-
 
             all_posts.append({
 
@@ -390,16 +434,11 @@ def get_recent_posts():
                     ""
                 ),
 
-                "created": post.get(
-                    "created",
-                    ""
-                )
+                "created": created_str
 
             })
 
-
             added_this_batch += 1
-
 
         print(
             f"Batch #{page_number}: "
@@ -409,9 +448,21 @@ def get_recent_posts():
             flush=True
         )
 
+        # ----------------------------------------------------
+        # STOP PAGINATION AFTER REACHING 1-YEAR CUTOFF
+        # ----------------------------------------------------
+
+        if reached_old_posts:
+
+            print(
+                "Stopped fetching because "
+                "posts are now older than 1 year.",
+                flush=True
+            )
+
+            break
 
         last_post = result[-1]
-
 
         new_start_author = (
             last_post.get("author")
@@ -420,7 +471,6 @@ def get_recent_posts():
         new_start_permlink = (
             last_post.get("permlink")
         )
-
 
         if (
             new_start_author == start_author
@@ -436,7 +486,6 @@ def get_recent_posts():
 
             break
 
-
         if added_this_batch == 0:
 
             print(
@@ -447,20 +496,8 @@ def get_recent_posts():
 
             break
 
-
         start_author = new_start_author
         start_permlink = new_start_permlink
-
-
-        if len(all_posts) >= 5000:
-
-            print(
-                "Reached 5000-post safety limit.",
-                flush=True
-            )
-
-            break
-
 
         if len(result) < 100:
 
@@ -472,19 +509,15 @@ def get_recent_posts():
 
             break
 
-
         time.sleep(0.3)
-
 
     all_posts.reverse()
 
-
     print(
-        f"\nTotal historical posts fetched: "
+        f"\nTotal posts from last 1 year: "
         f"{len(all_posts)}",
         flush=True
     )
-
 
     return all_posts
 
@@ -585,7 +618,6 @@ def normalize_text(text):
     )
 
     return text.strip()
-
 
 
 # ============================================================
@@ -1238,6 +1270,76 @@ def main():
         f"{len(synced_posts)}",
         flush=True
     )
+
+
+    # --------------------------------------------------------
+    # FETCH ALL POSTS
+    # --------------------------------------------------------
+
+    posts = get_recent_posts()
+
+
+    # --------------------------------------------------------
+    # FIND UNSYNCED
+    # --------------------------------------------------------
+
+    new_posts = []
+
+
+    for post in posts:
+
+        post_id = (
+            f'{post["author"]}/'
+            f'{post["permlink"]}'
+        )
+
+
+        if post_id not in synced_posts:
+
+            new_posts.append(
+                post
+            )
+
+
+    print(
+        f"Total posts fetched: "
+        f"{len(posts)}",
+        flush=True
+    )
+
+
+    print(
+        f"Unsynced posts available: "
+        f"{len(new_posts)}",
+        flush=True
+    )
+
+
+    # --------------------------------------------------------
+    # LIMIT POSTS PER RUN
+    # --------------------------------------------------------
+
+    new_posts_to_run = (
+        new_posts[:POSTS_PER_RUN]
+    )
+
+
+    print(
+        f"Publishing this run: "
+        f"{len(new_posts_to_run)} post(s)",
+        flush=True
+    )
+
+
+    if not new_posts_to_run:
+
+        print(
+            "No new posts to sync!",
+            flush=True
+        )
+
+        return
+
 
     # --------------------------------------------------------
     # PLAYWRIGHT
