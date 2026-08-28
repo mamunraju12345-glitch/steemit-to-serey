@@ -1,51 +1,54 @@
-name: Steemit to Serey
+name: Steemit to Serey Auto Sync
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "0 4,13 * * *"
+    # দিনে ২ বার রান হবে (UTC 00:00 এবং 12:00 -> বাংলাদেশ সময় সকাল ৬:০০ টা ও সন্ধ্যা ৬:০০ টা)
+    - cron: '0 0,12 * * *'
+  
+  # যাতে প্রয়োজন হলে আপনি গিটহাব থেকে ম্যানুয়ালিও রান করতে পারেন
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  sync:
+  sync-posts:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install Python Dependencies
         run: |
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install requests playwright
 
-      - name: Install Playwright browser
+      - name: Install Playwright Chromium & System Dependencies
         run: |
-          playwright install --with-deps chromium
+          python -m playwright install --with-deps chromium
 
-      - name: Run Steemit to Serey script
+      - name: Run Steemit to Serey Script
         env:
           STEEM_USERNAME: ${{ secrets.STEEM_USERNAME }}
           SEREY_LOGIN: ${{ secrets.SEREY_LOGIN }}
           SEREY_PASSWORD: ${{ secrets.SEREY_PASSWORD }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: |
-          python steemit_to_serey.py
+          python main.py
 
-      - name: Commit and Push synced_posts.json
-        if: always()
+      - name: Save and Push Synced Posts
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action Bot"
-
-          if [ -f synced_posts.json ]; then
-            git add synced_posts.json
-            git commit -m "Update synced_posts.json [skip ci]" || echo "No changes"
-            git push || echo "Push skipped"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add synced_posts.json
+          if git diff --staged --quiet; then
+            echo "No new posts to update."
+          else
+            git commit -m "Auto-update synced_posts.json [skip ci]"
+            git push
           fi
