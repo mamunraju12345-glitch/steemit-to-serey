@@ -37,10 +37,7 @@ STEEM_NODES = [
 DATA_FILE = "synced_posts.json"
 TEMP_IMG_FILE = "temp_thumbnail.jpg"
 
-# প্রতি GitHub Actions run-এ কয়টি পোস্ট publish করবে
 POSTS_PER_RUN = 1
-
-# ২ বছর আগের পোস্ট থেকে শুরু করতে (২ বছর = ৭৩০ দিন)
 START_FROM_DAYS_AGO = 2 * 365
 
 
@@ -245,7 +242,7 @@ def extract_image_and_clean_body(
 
 
 # ============================================================
-# FETCH POSTS (STARTING AT 2 YEARS AGO -> MOVING UPWARDS)
+# FETCH POSTS (STARTING AT 2 YEARS AGO)
 # ============================================================
 
 def get_recent_posts():
@@ -435,7 +432,7 @@ def normalize_text(text):
 
 
 # ============================================================
-# VERIFY SEREY POST (FIXED ACCURATE CHECK)
+# VERIFY SEREY POST
 # ============================================================
 
 def verify_serey_post(page, post):
@@ -445,16 +442,14 @@ def verify_serey_post(page, post):
     print("\n🔎 VERIFYING POST ON SEREY...", flush=True)
     print(f"Expected title: {title}", flush=True)
 
-    page.wait_for_timeout(5000)
+    page.wait_for_timeout(4000)
     current_url = page.url
     print(f"Current Serey URL: {current_url}", flush=True)
 
-    # ১. পেজ যদি এডিটর পেজেই আটকে থাকে, তবে সাবমিট হয়নি (পাবলিশ ব্যর্থ)
     if "/blog/post/new" in current_url:
         print("❌ FAILED: Browser is still on creation page (/blog/post/new). Form did not submit!", flush=True)
         return False
 
-    # ২. প্রোফাইল পেজে গিয়ে নতুন পোস্টটি চেক করা
     profile_urls = [
         f"https://serey.io/authors/@{SEREY_LOGIN}",
         f"https://serey.io/authors/{SEREY_LOGIN}"
@@ -466,7 +461,7 @@ def verify_serey_post(page, post):
         try:
             print(f"Checking profile: {profile_url}", flush=True)
             page.goto(profile_url, timeout=30000, wait_until="domcontentloaded")
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(4000)
 
             profile_html = page.content()
             normalized_profile = normalize_text(profile_html)
@@ -495,18 +490,22 @@ def publish_to_serey(page, post):
         page.goto("https://serey.io/blog/post/new", timeout=60000)
         page.wait_for_timeout(4000)
 
-        # TITLE
+        # TITLE (With input event trigger)
         title_box = page.locator(
             'input[placeholder*="title" i], input[placeholder*="Title"]'
         ).first
+        title_box.focus()
         title_box.fill(post["title"])
+        title_box.dispatch_event("input")
         print("  - Title filled!", flush=True)
 
-        # BODY
+        # BODY (With input event trigger)
         body_box = page.locator(
             'div[contenteditable="true"], textarea[placeholder*="content" i], textarea'
         ).first
+        body_box.focus()
         body_box.fill(post["body"])
+        body_box.dispatch_event("input")
         print("  - Clean body content filled!", flush=True)
 
         page.wait_for_timeout(2000)
@@ -524,51 +523,56 @@ def publish_to_serey(page, post):
             except Exception as e:
                 print(f"  - Thumbnail upload skipped: {e}", flush=True)
 
-        # FIRST PUBLISH CLICK (Opens Category Modal)
+        # FIRST PUBLISH CLICK
         print("  - Clicking initial Publish button...", flush=True)
         page.locator('button:has-text("Publish")').first.click(force=True)
         page.wait_for_timeout(4000)
 
-        # CATEGORY SELECTION
+        # CATEGORY SELECTION (Ant Design DOM Click Fix)
         print("  - Selecting Category...", flush=True)
         try:
-            # Dropdown click
-            dropdown = page.locator('.ant-select-selector, .ant-select, div:has-text("Select category")').last
+            dropdown = page.locator('.ant-modal-body .ant-select, .ant-select-selector').first
             dropdown.click(force=True)
             page.wait_for_timeout(1500)
 
-            # Keyboard Events for Option Pick
-            page.keyboard.press("ArrowDown")
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(1500)
-            print("  - Category selected!", flush=True)
+            option = page.locator('.ant-select-dropdown .ant-select-item-option').first
+            if option.is_visible():
+                option.click(force=True)
+                print("  - Category option clicked directly!", flush=True)
+            else:
+                page.keyboard.press("ArrowDown")
+                page.keyboard.press("Enter")
+                print("  - Category selected via keyboard!", flush=True)
         except Exception as cat_err:
             print(f"  - Category select error: {cat_err}", flush=True)
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+
+        page.wait_for_timeout(2000)
 
         # FINAL PUBLISH CLICK
         print("  - Clicking Final Publish button in Modal...", flush=True)
-        final_btn = page.locator(
-            '.ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish"), button:has-text("Publish")'
+        modal_publish_btn = page.locator('.ant-modal-content button, .ant-modal-footer button').filter(
+            has_text=re.compile(r"^Publish$", re.I)
         ).last
         
-        final_btn.click(force=True)
-        page.wait_for_timeout(1000)
-        page.keyboard.press("Enter")
-        
+        if modal_publish_btn.count() > 0:
+            modal_publish_btn.click(force=True)
+        else:
+            page.locator('button:has-text("Publish")').last.click(force=True)
+
         print("  - Final Publish button clicked! Waiting for page redirect...", flush=True)
 
-        # Wait 15 seconds for Serey backend to register post
-        page.wait_for_timeout(15000)
+        # Wait up to 15s for redirect away from /blog/post/new
+        for _ in range(15):
+            page.wait_for_timeout(1000)
+            if "/blog/post/new" not in page.url:
+                print(f"  - Redirected to: {page.url}", flush=True)
+                break
 
-        # REAL ACCURATE VERIFICATION
+        # ACCURATE VERIFICATION
         verified = verify_serey_post(page, post)
-
-        if verified:
-            print(f"\n✅ VERIFIED & CONFIRMED: {post['title']}", flush=True)
-            return True
-
-        print(f"\n❌ PUBLISH NOT VERIFIED: {post['title']}", flush=True)
-        return False
+        return verified
 
     except Exception as e:
         print(f"\n❌ Failed to publish post on Serey: {e}", flush=True)
