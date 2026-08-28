@@ -262,7 +262,6 @@ def get_recent_posts():
     start_permlink = None
     page_number = 0
 
-    # ঠিক ২ বছর আগের তারিখ বের করা হলো
     two_years_ago = datetime.now(timezone.utc) - timedelta(days=START_FROM_DAYS_AGO)
     print(f"Start boundary: Posts from {two_years_ago.strftime('%Y-%m-%d')} up to Today.", flush=True)
 
@@ -321,14 +320,12 @@ def get_recent_posts():
             if post_id in seen_ids:
                 continue
 
-            # তারিখ চেক করা
             created_str = post.get("created", "")
             try:
                 post_date = datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
             except Exception:
                 post_date = None
 
-            # যদি পোস্ট ২ বছরেরও বেশি পুরনো হয়, তবে ফেচ করা বন্ধ করবে
             if post_date and post_date < two_years_ago:
                 print(f"Reached posts older than 2 years ({created_str}). Stopping fetch.", flush=True)
                 stop_fetching = True
@@ -394,8 +391,6 @@ def get_recent_posts():
 
         time.sleep(0.3)
 
-    # ২ বছর আগের সবচেয়ে পুরনো পোস্টটি একদম সামনে (Index 0) নিয়ে আসা হলো,
-    # যাতে ২ বছর আগের পয়েন্ট থেকে পোস্ট হওয়া শুরু করে ধাপে ধাপে নতুন দিনের দিকে আসে।
     all_posts.sort(key=lambda x: x["created_dt"] if x["created_dt"] else datetime.min.replace(tzinfo=timezone.utc))
 
     print(
@@ -455,7 +450,7 @@ def normalize_text(text):
 
 
 # ============================================================
-# VERIFY SEREY POST
+# VERIFY SEREY POST (FIXED ACCURATE CHECK)
 # ============================================================
 
 def verify_serey_post(page, post):
@@ -465,32 +460,28 @@ def verify_serey_post(page, post):
     print("\n🔎 VERIFYING POST ON SEREY...", flush=True)
     print(f"Expected title: {title}", flush=True)
 
-    try:
-        page.wait_for_timeout(5000)
-        current_url = page.url
-        print(f"Current Serey URL: {current_url}", flush=True)
+    page.wait_for_timeout(5000)
+    current_url = page.url
+    print(f"Current Serey URL: {current_url}", flush=True)
 
-        html = page.content()
-        normalized_html = normalize_text(html)
-        normalized_title = normalize_text(title)
+    # ১. এডিটর পেজেই যদি থেকে যায়, তবে পাবলিশ ব্যর্থ হয়েছে!
+    if "/blog/post/new" in current_url:
+        print("❌ FAILED: Browser is still on creation page (/blog/post/new). Form did not submit!", flush=True)
+        return False
 
-        if normalized_title and normalized_title in normalized_html:
-            print("✅ TITLE FOUND ON CURRENT SEREY PAGE!", flush=True)
-            return True
-
-    except Exception as e:
-        print(f"Current-page verification failed: {e}", flush=True)
-
+    # ২. প্রোফাইল চেক
     profile_urls = [
         f"https://serey.io/authors/{SEREY_LOGIN}",
         f"https://serey.io/authors/@{SEREY_LOGIN}"
     ]
 
+    normalized_title = normalize_text(title)
+
     for profile_url in profile_urls:
         try:
             print(f"Checking profile: {profile_url}", flush=True)
             page.goto(profile_url, timeout=30000, wait_until="domcontentloaded")
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(4000)
 
             profile_html = page.content()
             normalized_profile = normalize_text(profile_html)
@@ -503,49 +494,7 @@ def verify_serey_post(page, post):
         except Exception as e:
             print(f"Profile verification error: {e}", flush=True)
 
-    try:
-        print("Searching visible Serey links...", flush=True)
-        page.goto("https://serey.io", timeout=30000, wait_until="domcontentloaded")
-        page.wait_for_timeout(4000)
-
-        links = page.locator("a")
-        link_count = links.count()
-
-        for i in range(min(link_count, 300)):
-            try:
-                link = links.nth(i)
-                text = link.inner_text(timeout=1000).strip()
-
-                if not text:
-                    continue
-
-                if normalize_text(title) in normalize_text(text):
-                    href = link.get_attribute("href")
-                    print("✅ MATCHING POST LINK FOUND ON SEREY!", flush=True)
-                    print(f"Link: {href}", flush=True)
-
-                    if href:
-                        if href.startswith("/"):
-                            href = "https://serey.io" + href
-
-                        page.goto(href, timeout=30000)
-                        page.wait_for_timeout(4000)
-
-                        post_html = page.content()
-
-                        if normalize_text(title) in normalize_text(post_html):
-                            print("✅ POST PAGE VERIFIED!", flush=True)
-                            print(f"Verified URL: {page.url}", flush=True)
-                            return True
-
-            except Exception:
-                continue
-
-    except Exception as e:
-        print(f"Link search failed: {e}", flush=True)
-
-    print("❌ VERIFICATION FAILED.", flush=True)
-    print("Post will NOT be added to synced_posts.json.", flush=True)
+    print("❌ VERIFICATION FAILED. Post was not confirmed live on Serey.", flush=True)
     return False
 
 
@@ -587,54 +536,47 @@ def publish_to_serey(page, post):
                         file_input.set_input_files(temp_image)
                         print("  - Thumbnail image uploaded!", flush=True)
                         page.wait_for_timeout(4000)
-                    else:
-                        print("  - File input not found.", flush=True)
             except Exception as e:
                 print(f"  - Thumbnail upload skipped: {e}", flush=True)
 
-        # FIRST PUBLISH
+        # FIRST PUBLISH CLICK
+        print("  - Clicking initial Publish button...", flush=True)
         page.locator('button:has-text("Publish")').first.click(force=True)
-        print("  - First Publish button clicked!", flush=True)
-        page.wait_for_timeout(6000)
+        page.wait_for_timeout(4000)
 
-        # CATEGORY
+        # CATEGORY SELECTION (STRONG SELECTION)
+        print("  - Selecting Category...", flush=True)
         try:
-            dropdown = page.locator(
-                'div:has-text("Select category"), .ant-select, input[placeholder*="category" i]'
-            ).first
+            # Dropdown click
+            dropdown = page.locator('.ant-select-selector, .ant-select, div:has-text("Select category")').last
             dropdown.click(force=True)
             page.wait_for_timeout(1500)
 
-            option = page.locator(
-                '.ant-select-item-option, div[title="Tech"], div[title="Crypto"], li'
-            ).first
-
-            if option.count() > 0:
-                option.click(force=True)
-            else:
-                page.keyboard.press("ArrowDown")
-                page.keyboard.press("Enter")
-
-            print("  - Category selected!", flush=True)
-
-        except Exception:
-            print("  - Category auto-selecting via keyboard...", flush=True)
-            page.keyboard.press("Tab")
+            # Click option or use keyboard
             page.keyboard.press("ArrowDown")
             page.keyboard.press("Enter")
+            page.wait_for_timeout(1000)
+            print("  - Category selected!", flush=True)
+        except Exception as cat_err:
+            print(f"  - Category select error: {cat_err}", flush=True)
 
         page.wait_for_timeout(2000)
 
-        # FINAL PUBLISH
-        final_publish = page.locator(
+        # FINAL PUBLISH CLICK
+        print("  - Clicking Final Publish button...", flush=True)
+        final_btn = page.locator(
             '.ant-modal-content button:has-text("Publish"), .ant-modal-footer button:has-text("Publish"), button:has-text("Publish")'
         ).last
-        final_publish.click(force=True)
-        print("  - Final Publish button clicked!", flush=True)
+        
+        final_btn.click(force=True)
+        page.keyboard.press("Enter") # Safety Enter key press
+        
+        print("  - Final Publish button clicked! Waiting for navigation...", flush=True)
 
-        page.wait_for_timeout(12000)
+        # রিডাইরেক্ট হওয়ার জন্য পর্যাপ্ত সময় নেওয়া
+        page.wait_for_timeout(15000)
 
-        # VERIFICATION
+        # REAL VERIFICATION
         verified = verify_serey_post(page, post)
 
         if verified:
