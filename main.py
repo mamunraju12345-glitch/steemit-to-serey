@@ -751,7 +751,7 @@ def publish(page, post):
                     image
                 )
 
-                page.wait_for_timeout(3000)
+                page.wait_for_timeout(10000)
 
                 print(
                     "✓ Thumbnail uploaded",
