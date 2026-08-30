@@ -628,9 +628,7 @@ def verify_serey_post(
         flush=True
     )
 
-    # --------------------------------------------------------
-    # 0. Strict URL Guard: Check if stuck on edit page
-    # --------------------------------------------------------
+    # Strict URL Guard: Check if stuck on edit page
     current_url = page.url
     print(f"Current Serey URL: {current_url}", flush=True)
 
@@ -640,9 +638,7 @@ def verify_serey_post(
 
     normalized_title = normalize_text(title)
 
-    # --------------------------------------------------------
     # 1. Check if redirected to published post URL
-    # --------------------------------------------------------
     try:
 
         page.wait_for_timeout(3000)
@@ -670,10 +666,7 @@ def verify_serey_post(
         )
 
 
-    # --------------------------------------------------------
     # 2. Open author's profile
-    # --------------------------------------------------------
-
     profile_urls = [
 
         f"{SEREY_BASE_URL}/authors/{SEREY_LOGIN}",
@@ -741,102 +734,8 @@ def verify_serey_post(
             )
 
 
-    # --------------------------------------------------------
-    # 3. Search page links for matching title
-    # --------------------------------------------------------
-
-    try:
-
-        print(
-            "Searching visible Serey links...",
-            flush=True
-        )
-
-
-        page.goto(
-            SEREY_BASE_URL,
-            timeout=30000,
-            wait_until="domcontentloaded"
-        )
-
-
-        page.wait_for_timeout(4000)
-
-
-        links = page.locator("a")
-
-        link_count = links.count()
-
-
-        for i in range(min(link_count, 300)):
-
-            try:
-
-                link = links.nth(i)
-
-                text = link.inner_text(
-                    timeout=1000
-                ).strip()
-
-
-                if not text:
-                    continue
-
-
-                if (
-                    normalize_text(title)
-                    in
-                    normalize_text(text)
-                ):
-
-                    href = link.get_attribute("href")
-
-                    print("✅ MATCHING POST LINK FOUND ON SEREY!", flush=True)
-                    print(f"Link: {href}", flush=True)
-
-                    if href:
-
-                        if href.startswith("/"):
-                            href = SEREY_BASE_URL + href
-
-                        page.goto(
-                            href,
-                            timeout=30000
-                        )
-
-                        page.wait_for_timeout(4000)
-
-                        post_html = page.content()
-
-                        if (
-                            normalize_text(title)
-                            in
-                            normalize_text(post_html)
-                        ):
-
-                            print("✅ POST PAGE VERIFIED!", flush=True)
-                            print(f"Verified URL: {page.url}", flush=True)
-                            return True
-
-            except Exception:
-                continue
-
-
-    except Exception as e:
-
-        print(
-            f"Link search failed: {e}",
-            flush=True
-        )
-
-
     print(
         "❌ VERIFICATION FAILED.",
-        flush=True
-    )
-
-    print(
-        "Post will NOT be added to synced_posts.json.",
         flush=True
     )
 
@@ -984,100 +883,65 @@ def publish_to_serey(
         )
 
 
-        page.wait_for_timeout(6000)
+        page.wait_for_timeout(5000)
 
 
         # ----------------------------------------------------
-        # CATEGORY
+        # CATEGORY & TAG SELECTION (ROBUST FIX)
         # ----------------------------------------------------
 
         try:
-
-            dropdown = page.locator(
-                'div:has-text("Select category"), '
-                '.ant-select, '
-                'input[placeholder*="category" i]'
+            # Click Ant Design Select Dropdown
+            category_selector = page.locator(
+                '.ant-modal-content .ant-select-selector, '
+                'div:has-text("Select category")'
             ).first
 
+            category_selector.click(force=True)
+            page.wait_for_timeout(2000)
 
-            dropdown.click(
-                force=True
-            )
-
-
-            page.wait_for_timeout(1500)
-
-
+            # Select first visible option in the dropdown list
             option = page.locator(
-                '.ant-select-item-option, '
-                'div[title="Tech"], '
-                'div[title="Crypto"], '
-                'li'
+                '.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, '
+                '.ant-select-item-option'
             ).first
-
 
             if option.count() > 0:
-
-                option.click(
-                    force=True
-                )
-
+                option.click(force=True)
+                print("  - Category selected from dropdown!", flush=True)
             else:
+                page.keyboard.press("ArrowDown")
+                page.keyboard.press("Enter")
+                print("  - Category selected via Keyboard!", flush=True)
 
-                page.keyboard.press(
-                    "ArrowDown"
-                )
-
-                page.keyboard.press(
-                    "Enter"
-                )
-
-
-            print(
-                "  - Category selected!",
-                flush=True
-            )
-
-
-        except Exception:
-
-            print(
-                "  - Category auto-selecting via keyboard...",
-                flush=True
-            )
-
-
-            page.keyboard.press(
-                "Tab"
-            )
-
-            page.keyboard.press(
-                "ArrowDown"
-            )
-
-            page.keyboard.press(
-                "Enter"
-            )
-
+        except Exception as cat_err:
+            print(f"  - Category Selection Warning: {cat_err}", flush=True)
 
         page.wait_for_timeout(2000)
 
+        # Fill Tag if input exists
+        try:
+            tag_input = page.locator('.ant-modal-content input[placeholder*="tag" i], .ant-modal-content input').last
+            if tag_input.count() > 0:
+                tag_input.fill("bengali")
+                page.keyboard.press("Enter")
+                print("  - Tag filled!", flush=True)
+        except Exception:
+            pass
+
+        page.wait_for_timeout(2000)
 
         # ----------------------------------------------------
         # FINAL PUBLISH
         # ----------------------------------------------------
 
         final_publish = page.locator(
-            '.ant-modal-content button:has-text("Publish"), '
+            '.ant-modal-content button.ant-btn-primary, '
             '.ant-modal-footer button:has-text("Publish"), '
-            'button:has-text("Publish")'
+            '.ant-modal-content button:has-text("Publish")'
         ).last
 
-
-        final_publish.click(
-            force=True
-        )
-
+        final_publish.click(force=True)
 
         print(
             "  - Final Publish button clicked!",
@@ -1085,8 +949,8 @@ def publish_to_serey(
         )
 
 
-        # Give Serey enough time
-        page.wait_for_timeout(12000)
+        # Wait for redirect to complete
+        page.wait_for_timeout(15000)
 
 
         # ----------------------------------------------------
