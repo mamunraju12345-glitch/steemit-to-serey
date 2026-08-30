@@ -3,6 +3,7 @@ import json
 import re
 import time
 import requests
+from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 
 
@@ -18,9 +19,6 @@ SEREY_LOGIN = os.environ.get(
 ).replace("@", "").strip()
 
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
-
-# Pexels API key is used ONLY as thumbnail fallback
-PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "").strip()
 
 SEREY = "https://bengali.serey.io"
 NEW_POST = f"{SEREY}/blog/post/new"
@@ -168,6 +166,16 @@ def get_posts():
     start_author = None
     start_permlink = None
 
+    # ONLY LAST 1 YEAR
+    one_year_ago = datetime.now(
+        timezone.utc
+    ) - timedelta(days=365)
+
+    print(
+        f"Only posts since: {one_year_ago.strftime('%Y-%m-%d %H:%M:%S UTC')}",
+        flush=True
+    )
+
     while len(posts) < 5000:
 
         params = {
@@ -192,10 +200,40 @@ def get_posts():
         if not batch:
             break
 
+        reached_old_posts = False
+
         for p in batch:
 
             if p.get("author") != STEEM_USERNAME:
                 continue
+
+            # ====================================================
+            # ONE YEAR DATE FILTER
+            # ====================================================
+
+            created = p.get("created", "")
+
+            if created:
+
+                try:
+
+                    post_date = datetime.strptime(
+                        created,
+                        "%Y-%m-%dT%H:%M:%S"
+                    ).replace(
+                        tzinfo=timezone.utc
+                    )
+
+                    # Since API gives newest -> oldest,
+                    # once we reach older than 1 year,
+                    # we can stop collecting older posts.
+                    if post_date < one_year_ago:
+
+                        reached_old_posts = True
+                        continue
+
+                except Exception:
+                    pass
 
             author = p.get("author", "")
             permlink = p.get("permlink", "")
@@ -223,6 +261,11 @@ def get_posts():
                 "category": p.get("category", "")
             })
 
+        # If we reached posts older than one year,
+        # stop requesting older pages.
+        if reached_old_posts:
+            break
+
         last = result[-1]
 
         new_author = last.get("author")
@@ -242,10 +285,15 @@ def get_posts():
 
         time.sleep(0.3)
 
+    # IMPORTANT:
+    # API returns newest -> oldest.
+    # Reverse makes it oldest -> newest.
+    # So publishing starts from around 1 year ago
+    # and gradually moves toward the latest post.
     posts.reverse()
 
     print(
-        f"Total posts: {len(posts)}",
+        f"Total posts in last 1 year: {len(posts)}",
         flush=True
     )
 
@@ -292,126 +340,6 @@ def download_image(url):
             f"Image download failed: {e}",
             flush=True
         )
-        return None
-
-
-# ============================================================
-# PEXELS THUMBNAIL FALLBACK
-# ============================================================
-
-def download_pexels_image(title, category):
-
-    if not PEXELS_API_KEY:
-        print(
-            "PEXELS_API_KEY not available.",
-            flush=True
-        )
-        return None
-
-    # Use the Steem post title first.
-    # If title is too long, also include the category.
-    query = title.strip()
-
-    if category and category.lower() not in query.lower():
-        query = f"{query} {category}"
-
-    # Keep the search query reasonable.
-    query = re.sub(r"\s+", " ", query).strip()
-    query = query[:150]
-
-    if not query:
-        query = category.strip() or "photography"
-
-    try:
-
-        print(
-            f"Pexels fallback search: {query}",
-            flush=True
-        )
-
-        response = requests.get(
-            "https://api.pexels.com/v1/search",
-            headers={
-                "Authorization": PEXELS_API_KEY
-            },
-            params={
-                "query": query,
-                "orientation": "landscape",
-                "size": "large",
-                "per_page": 1
-            },
-            timeout=30
-        )
-
-        response.raise_for_status()
-
-        data = response.json()
-
-        photos = data.get("photos", [])
-
-        if not photos:
-            print(
-                "No Pexels image found.",
-                flush=True
-            )
-            return None
-
-        photo = photos[0]
-
-        image_url = (
-            photo.get("src", {}).get("large")
-            or photo.get("src", {}).get("original")
-        )
-
-        if not image_url:
-            print(
-                "Pexels image URL not found.",
-                flush=True
-            )
-            return None
-
-        print(
-            f"Downloading Pexels image: {image_url}",
-            flush=True
-        )
-
-        image_response = requests.get(
-            image_url,
-            timeout=30,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            }
-        )
-
-        image_response.raise_for_status()
-
-        if "image" not in image_response.headers.get(
-            "content-type",
-            ""
-        ).lower():
-            print(
-                "Pexels response is not an image.",
-                flush=True
-            )
-            return None
-
-        with open(TEMP_IMAGE, "wb") as f:
-            f.write(image_response.content)
-
-        print(
-            "✓ Pexels thumbnail downloaded",
-            flush=True
-        )
-
-        return TEMP_IMAGE
-
-    except Exception as e:
-
-        print(
-            f"Pexels image failed: {e}",
-            flush=True
-        )
-
         return None
 
 
@@ -716,26 +644,8 @@ def publish(page, post):
         flush=True
     )
 
-    # ========================================================
     # THUMBNAIL
-    # ========================================================
-
-    # First: use original Steemit image exactly as before.
     image = download_image(post.get("image"))
-
-    # Only if original image is unavailable/download fails,
-    # use Pexels as a fallback.
-    if not image:
-
-        print(
-            "Original thumbnail unavailable.",
-            flush=True
-        )
-
-        image = download_pexels_image(
-            post.get("title", ""),
-            post.get("category", "")
-        )
 
     if image:
 
@@ -751,7 +661,7 @@ def publish(page, post):
                     image
                 )
 
-                page.wait_for_timeout(10000)
+                page.wait_for_timeout(3000)
 
                 print(
                     "✓ Thumbnail uploaded",
