@@ -2,11 +2,7 @@ name: Steemit to Serey Auto Sync
 
 on:
   schedule:
-    # দিনে ২ বার রান হবে
-    # UTC 00:00 এবং 12:00
     - cron: '0 0,12 * * *'
-
-  # GitHub থেকে প্রয়োজন হলে Manual Run করা যাবে
   workflow_dispatch:
 
 permissions:
@@ -18,42 +14,41 @@ jobs:
 
     steps:
 
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install Python Dependencies
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests playwright
 
-      - name: Install Playwright Chromium & System Dependencies
+      - name: Install Chromium
         run: |
           python -m playwright install --with-deps chromium
 
-      - name: Run Steemit to Serey Script
+      - name: Run Sync
         env:
           STEEM_USERNAME: ${{ secrets.STEEM_USERNAME }}
           SEREY_LOGIN: ${{ secrets.SEREY_LOGIN }}
           SEREY_PASSWORD: ${{ secrets.SEREY_PASSWORD }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: |
           python main.py
 
-      - name: Save and Push Synced Posts
+      - name: Save Synced Posts
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add synced_posts.json
 
-          if git diff --staged --quiet; then
+          if git diff --cached --quiet; then
             echo "No new posts to update."
           else
-            git commit -m "Auto-update synced_posts.json [skip ci]"
+            git commit -m "Auto-update synced posts [skip ci]"
             git push
           fi
