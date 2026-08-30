@@ -1,831 +1,242 @@
-import os
-import json
-import re
-import time
-import requests
+import os,json,re,time,requests
 from playwright.sync_api import sync_playwright
 
+USER=os.environ["STEEM_USERNAME"].strip()
+LOGIN=os.environ.get("SEREY_LOGIN","").replace("@","").strip()
+PASS=os.environ["SEREY_PASSWORD"].strip()
 
-# ============================================================
-# SETTINGS
-# ============================================================
+BASE="https://bengali.serey.io"
+NEW=f"{BASE}/blog/post/new"
+FILE="synced_posts.json"
 
-STEEM_USERNAME = os.environ["STEEM_USERNAME"]
-
-SEREY_LOGIN = os.environ.get(
-    "SEREY_LOGIN",
-    os.environ.get("SEREY_USERNAME", "")
-).replace("@", "").strip()
-
-SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
-
-SEREY = "https://bengali.serey.io"
-NEW_POST = f"{SEREY}/blog/post/new"
-
-SYNC_FILE = "synced_posts.json"
-TEMP_IMAGE = "temp_image.jpg"
-
-POSTS_PER_RUN = 1
-
-STEEM_NODES = [
+NODES=[
     "https://api.steemit.com",
     "https://api.justyy.com",
     "https://api.moecki.online",
-    "https://steem.619.io",
+    "https://steem.619.io"
 ]
 
-
-# ============================================================
-# STEEM RPC
-# ============================================================
-
-def rpc(method, params):
-    payload = {
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1
-    }
-
-    for node in STEEM_NODES:
+def rpc(method,params):
+    for n in NODES:
         try:
-            print(f"RPC: {node}", flush=True)
+            r=requests.post(n,json={
+                "jsonrpc":"2.0","method":method,
+                "params":params,"id":1
+            },timeout=20)
+            d=r.json()
+            if "result" in d:return d["result"]
+        except:pass
+    raise Exception("Steem RPC failed")
 
-            r = requests.post(
-                node,
-                json=payload,
-                timeout=20
-            )
-
-            r.raise_for_status()
-            data = r.json()
-
-            if "error" in data:
-                raise Exception(data["error"])
-
-            return data["result"]
-
-        except Exception as e:
-            print(f"RPC failed: {e}", flush=True)
-
-    raise Exception("All Steem RPC nodes failed")
-
-
-# ============================================================
-# SYNC FILE
-# ============================================================
-
-def load_synced():
-    if not os.path.exists(SYNC_FILE):
-        return set()
-
+def synced():
     try:
-        with open(SYNC_FILE, encoding="utf-8") as f:
-            return set(json.load(f))
-    except Exception:
-        return set()
+        return set(json.load(open(FILE,encoding="utf8")))
+    except:return set()
 
+def save(x):
+    json.dump(sorted(x),open(FILE,"w",encoding="utf8"),
+              ensure_ascii=False,indent=2)
 
-def save_synced(data):
-    with open(
-        SYNC_FILE,
-        "w",
-        encoding="utf-8"
-    ) as f:
-        json.dump(
-            sorted(data),
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
+def posts():
+    out=[];seen=set()
+    a=p=None
 
+    while len(out)<5000:
+        q={"tag":USER,"limit":100}
+        if a:q.update(start_author=a,start_permlink=p)
 
-# ============================================================
-# CLEAN BODY + IMAGE
-# ============================================================
+        r=rpc("condenser_api.get_discussions_by_blog",q)
+        if not r:break
 
-def clean_post(body, metadata):
-    image = None
+        for x in (r[1:] if a else r):
+            if x.get("author")!=USER:continue
 
-    try:
-        meta = json.loads(metadata or "{}")
-
-        for x in meta.get("image", []):
-            if isinstance(x, str):
-                image = x
-                break
-
-    except Exception:
-        pass
-
-    if not image:
-        m = re.search(
-            r'!\[[^\]]*\]\((https?://[^)\s]+)',
-            body,
-            re.I
-        )
-        if m:
-            image = m.group(1)
-
-    body = re.sub(
-        r'!\[[^\]]*\]\([^)]+\)',
-        '',
-        body
-    )
-
-    body = re.sub(
-        r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?',
-        '',
-        body,
-        flags=re.I
-    )
-
-    body = re.sub(
-        r'\n{3,}',
-        '\n\n',
-        body
-    )
-
-    return body.strip(), image
-
-
-# ============================================================
-# GET STEEM POSTS
-# ============================================================
-
-def get_posts():
-    print(
-        f"Getting posts from @{STEEM_USERNAME}...",
-        flush=True
-    )
-
-    posts = []
-    seen = set()
-
-    start_author = None
-    start_permlink = None
-
-    while len(posts) < 5000:
-
-        params = {
-            "tag": STEEM_USERNAME,
-            "limit": 100
-        }
-
-        if start_author:
-            params["start_author"] = start_author
-            params["start_permlink"] = start_permlink
-
-        result = rpc(
-            "condenser_api.get_discussions_by_blog",
-            params
-        )
-
-        if not result:
-            break
-
-        batch = result[1:] if start_author else result
-
-        if not batch:
-            break
-
-        for p in batch:
-
-            if p.get("author") != STEEM_USERNAME:
-                continue
-
-            author = p.get("author", "")
-            permlink = p.get("permlink", "")
-
-            if not permlink:
-                continue
-
-            pid = f"{author}/{permlink}"
-
-            if pid in seen:
-                continue
-
+            pid=f"{USER}/{x.get('permlink','')}"
+            if pid in seen:continue
             seen.add(pid)
 
-            body, image = clean_post(
-                p.get("body", ""),
-                p.get("json_metadata", "{}")
-            )
+            body=x.get("body","")
+            image=None
 
-            posts.append({
-                "id": pid,
-                "title": p.get("title", "").strip(),
-                "body": body,
-                "image": image,
-                "category": p.get("category", "")
+            try:
+                m=json.loads(x.get("json_metadata","{}"))
+                image=(m.get("image") or [None])[0]
+            except:pass
+
+            if not image:
+                m=re.search(r'!\[[^\]]*\]\((https?://[^)]+)',body)
+                if m:image=m.group(1)
+
+            body=re.sub(r'!\[[^\]]*\]\([^)]+\)','',body).strip()
+
+            out.append({
+                "id":pid,
+                "title":x.get("title","").strip(),
+                "body":body,
+                "image":image,
+                "category":x.get("category","")
             })
 
-        last = result[-1]
+        last=r[-1]
+        na,np=last.get("author"),last.get("permlink")
 
-        new_author = last.get("author")
-        new_permlink = last.get("permlink")
+        if (na,np)==(a,p):break
+        a,p=na,np
 
-        if (
-            new_author == start_author
-            and new_permlink == start_permlink
-        ):
-            break
+        if len(r)<100:break
 
-        start_author = new_author
-        start_permlink = new_permlink
-
-        if len(result) < 100:
-            break
-
-        time.sleep(0.3)
-
-    posts.reverse()
-
-    print(
-        f"Total posts: {len(posts)}",
-        flush=True
-    )
-
-    return posts
-
-
-# ============================================================
-# IMAGE DOWNLOAD
-# ============================================================
-
-def download_image(url):
-
-    if not url:
-        return None
-
-    try:
-        print(
-            f"Downloading image: {url}",
-            flush=True
-        )
-
-        r = requests.get(
-            url,
-            timeout=20,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            }
-        )
-
-        r.raise_for_status()
-
-        if "image" not in r.headers.get(
-            "content-type", ""
-        ).lower():
-            return None
-
-        with open(TEMP_IMAGE, "wb") as f:
-            f.write(r.content)
-
-        return TEMP_IMAGE
-
-    except Exception as e:
-        print(
-            f"Image download failed: {e}",
-            flush=True
-        )
-        return None
-
-
-# ============================================================
-# LOGIN
-# ============================================================
+    return out[::-1]
 
 def login(page):
-
-    print("Logging into Serey...", flush=True)
-
-    page.goto(
-        SEREY,
-        wait_until="domcontentloaded",
-        timeout=60000
-    )
-
+    page.goto(BASE,wait_until="domcontentloaded",timeout=60000)
     page.wait_for_timeout(3000)
 
     page.locator(
-        'a:has-text("Log in"),'
-        'button:has-text("Log in"),'
-        'a:has-text("Log In"),'
-        'button:has-text("Log In")'
+        'a:has-text("Log in"),button:has-text("Log in"),'
+        'a:has-text("Log In"),button:has-text("Log In")'
     ).first.click(force=True)
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(2000)
+
+    page.locator('input[placeholder*="Username"]').first.fill(LOGIN)
+    page.locator('input[placeholder*="Private Key"]').first.fill(PASS)
 
     page.locator(
-        'input[placeholder*="Username"]'
-    ).first.fill(SEREY_LOGIN)
-
-    page.locator(
-        'input[placeholder*="Private Key"]'
-    ).first.fill(SEREY_PASSWORD)
-
-    page.locator(
-        'button:has-text("Log in"),'
-        'button:has-text("Log In")'
+        'button:has-text("Log in"),button:has-text("Log In")'
     ).last.click(force=True)
 
-    page.wait_for_timeout(6000)
+    page.wait_for_timeout(5000)
+    print("✓ SEREY LOGIN OK")
 
-    print(
-        "✓ LOGGED INTO SEREY SUCCESSFULLY!",
-        flush=True
-    )
-
-
-# ============================================================
-# CATEGORY
-# ============================================================
-
-def select_category(page, steem_category):
-
-    print(
-        f"Steemit category: {steem_category}",
-        flush=True
-    )
-
-    # Serey may automatically suggest a category.
-    # First look for the category selection area.
-
+def image(url):
+    if not url:return None
     try:
+        r=requests.get(url,timeout=20,
+                       headers={"User-Agent":"Mozilla/5.0"})
+        if "image" not in r.headers.get("content-type",""):return None
+        open("temp.jpg","wb").write(r.content)
+        return "temp.jpg"
+    except:return None
 
-        text = page.locator("body").inner_text(
-            timeout=5000
-        )
+def publish(page,p):
+    print("Publishing:",p["title"])
 
-        if "Your post belongs to category:" in text:
-            print(
-                "Serey suggested category automatically.",
-                flush=True
-            )
+    page.goto(NEW,wait_until="domcontentloaded",timeout=60000)
+    page.wait_for_timeout(2500)
 
-    except Exception:
-        pass
+    page.locator('input[placeholder*="Title" i]').first.fill(p["title"])
 
-    # Find "Select category"
-    selector = page.get_by_text(
-        "Select category",
-        exact=True
-    ).first
-
-    if selector.count() == 0:
-        print(
-            "No category selector. Continuing.",
-            flush=True
-        )
-        return False
-
-    try:
-
-        selector.click(force=True)
-
-        page.wait_for_timeout(1000)
-
-        # Try exact Steem category first
-        option = page.get_by_text(
-            steem_category,
-            exact=True
-        ).last
-
-        if option.count() > 0 and option.is_visible():
-            option.click(force=True)
-
-            print(
-                f"✓ Category selected: {steem_category}",
-                flush=True
-            )
-
-            return True
-
-        # Try text matching ignoring case
-        options = page.locator(
-            '[role="option"]'
-        )
-
-        for i in range(options.count()):
-
-            item = options.nth(i)
-
-            if not item.is_visible():
-                continue
-
-            txt = item.inner_text().strip()
-
-            if txt.lower() == steem_category.lower():
-
-                item.click(force=True)
-
-                print(
-                    f"✓ Category selected: {txt}",
-                    flush=True
-                )
-
-                return True
-
-        print(
-            f"Serey does not have category '{steem_category}'.",
-            flush=True
-        )
-
-    except Exception as e:
-
-        print(
-            f"Category selection failed: {e}",
-            flush=True
-        )
-
-    return False
-
-
-# ============================================================
-# SUB CATEGORY
-# ============================================================
-
-def select_subcategory(page):
-
-    try:
-
-        selector = page.get_by_text(
-            "Select sub category",
-            exact=True
-        ).first
-
-        if selector.count() == 0:
-            print(
-                "No Sub Category selector.",
-                flush=True
-            )
-            return
-
-        selector.click(force=True)
-
-        page.wait_for_timeout(800)
-
-        options = page.locator(
-            '[role="option"]'
-        )
-
-        if options.count() > 0:
-
-            for i in range(options.count()):
-
-                option = options.nth(i)
-
-                if option.is_visible():
-                    option.click(force=True)
-
-                    print(
-                        "✓ Sub Category selected.",
-                        flush=True
-                    )
-                    return
-
-        print(
-            "No Sub Category available.",
-            flush=True
-        )
-
-    except Exception as e:
-
-        print(
-            f"Sub Category skipped: {e}",
-            flush=True
-        )
-
-
-# ============================================================
-# VERIFY
-# ============================================================
-
-def verify(page, title):
-
-    print(
-        "VERIFYING PUBLISHED POST...",
-        flush=True
-    )
-
-    for _ in range(3):
-
-        page.wait_for_timeout(5000)
-
-        url = page.url
-
-        print(
-            f"Current URL: {url}",
-            flush=True
-        )
-
-        # Must leave /blog/post/new
-        if "/blog/post/new" in url:
-            continue
-
-        # Expected Serey author post URL
-        if "/authors/" in url:
-
-            print(
-                "✓ POST URL FOUND!",
-                flush=True
-            )
-
-            return True
-
-        # Fallback: title exists on page
-        try:
-
-            body = page.locator("body").inner_text()
-
-            if title.lower() in body.lower():
-                print(
-                    "✓ POST TITLE FOUND!",
-                    flush=True
-                )
-                return True
-
-        except Exception:
-            pass
-
-    print(
-        "❌ Publication could not be verified.",
-        flush=True
-    )
-
-    return False
-
-
-# ============================================================
-# PUBLISH
-# ============================================================
-
-def publish(page, post):
-
-    print("-" * 60)
-    print(
-        f"Publishing: {post['title']}",
-        flush=True
-    )
-
-    page.goto(
-        NEW_POST,
-        wait_until="domcontentloaded",
-        timeout=60000
-    )
-
-    page.wait_for_timeout(3000)
-
-    # TITLE
-    title = page.locator(
-        'input[placeholder*="Title" i]'
-    ).first
-
-    title.fill(post["title"])
-
-    print(
-        "✓ Title filled",
-        flush=True
-    )
-
-    # BODY
-    editor = page.locator(
-        'div[contenteditable="true"]'
-    ).first
-
+    editor=page.locator('[contenteditable="true"]').first
     editor.click()
-    editor.fill(post["body"])
+    editor.fill(p["body"])
 
-    print(
-        "✓ Body filled",
-        flush=True
-    )
-
-    # THUMBNAIL
-    image = download_image(post.get("image"))
-
-    if image:
-
+    f=image(p["image"])
+    if f:
         try:
+            page.locator('input[type="file"]').first.set_input_files(f)
+            page.wait_for_timeout(2500)
+            print("✓ IMAGE")
+        except:pass
 
-            file_input = page.locator(
-                'input[type="file"]'
-            ).first
-
-            if file_input.count() > 0:
-
-                file_input.set_input_files(
-                    image
-                )
-
-                page.wait_for_timeout(3000)
-
-                print(
-                    "✓ Thumbnail uploaded",
-                    flush=True
-                )
-
-        except Exception as e:
-
-            print(
-                f"Thumbnail skipped: {e}",
-                flush=True
-            )
-
-    else:
-
-        print(
-            "No thumbnail available.",
-            flush=True
-        )
-
-    # FIRST PUBLISH
-    page.get_by_text(
-        "Publish",
-        exact=True
-    ).last.click(force=True)
-
-    print(
-        "✓ FIRST PUBLISH CLICKED",
-        flush=True
-    )
-
-    page.wait_for_timeout(3000)
-
-    # CATEGORY
-    select_category(
-        page,
-        post["category"]
-    )
-
-    # SUB CATEGORY
-    select_subcategory(page)
-
-    # FINAL PUBLISH
-    print(
-        "Searching for FINAL Publish...",
-        flush=True
-    )
-
-    buttons = page.locator(
-        "button"
-    )
-
-    final_button = None
+    buttons=page.locator("button")
+    pubs=[]
 
     for i in range(buttons.count()):
+        b=buttons.nth(i)
+        try:
+            if b.is_visible() and b.inner_text().strip().lower()=="publish":
+                pubs.append(b)
+        except:pass
 
-        b = buttons.nth(i)
+    if not pubs:return False
 
-        if not b.is_visible():
-            continue
+    pubs[-1].click(force=True)
+    print("✓ FIRST PUBLISH")
 
-        txt = b.inner_text().strip()
+    page.wait_for_timeout(2500)
 
-        if txt == "Publish":
+    # Category if available
+    try:
+        page.get_by_text("Select category",exact=True).first.click(force=True)
+        page.wait_for_timeout(500)
+        page.get_by_text(p["category"],exact=True).last.click(force=True)
+    except:pass
 
-            final_button = b
+    # Final publish
+    buttons=page.locator("button")
+    final=None
 
-    if not final_button:
+    for i in range(buttons.count()):
+        b=buttons.nth(i)
+        try:
+            if b.is_visible() and b.inner_text().strip().lower()=="publish":
+                final=b
+        except:pass
 
-        print(
-            "❌ FINAL Publish button not found.",
-            flush=True
-        )
+    if not final:return False
 
-        return False
+    final.click(force=True)
+    print("✓ FINAL PUBLISH")
 
-    final_button.click(force=True)
+    # Must become /authors/mamun/...
+    for _ in range(10):
+        page.wait_for_timeout(3000)
+        url=page.url
 
-    print(
-        "✓ FINAL PUBLISH CLICKED",
-        flush=True
-    )
+        print("URL:",url)
 
-    page.wait_for_timeout(12000)
+        if re.match(
+            r"https://bengali\.serey\.io/authors/[^/]+/[^/?#]+",
+            url
+        ):
+            print("✓ PUBLISHED:",url)
+            return True
 
-    return verify(
-        page,
-        post["title"]
-    )
+    print("❌ NOT PUBLISHED")
+    print(page.locator("body").inner_text()[:3000])
 
-
-# ============================================================
-# MAIN
-# ============================================================
+    return False
 
 def main():
+    print("="*50)
+    print("STEEM → SEREY AUTO SYNC")
+    print("="*50)
 
-    print("=" * 60)
-    print("STEEM -> SEREY AUTO SYNC")
-    print("=" * 60)
+    done=synced()
+    ps=posts()
 
-    synced = load_synced()
+    new=[p for p in ps if p["id"] not in done]
 
-    print(
-        f"Previously synced: {len(synced)}",
-        flush=True
-    )
+    print("Total posts:",len(ps))
+    print("Previously synced:",len(done))
+    print("Unsynced:",len(new))
 
-    posts = get_posts()
-
-    new_posts = [
-        p for p in posts
-        if p["id"] not in synced
-    ]
-
-    print(
-        f"Unsynced posts: {len(new_posts)}",
-        flush=True
-    )
-
-    posts_to_run = new_posts[:POSTS_PER_RUN]
-
-    print(
-        f"Publishing this run: {len(posts_to_run)}",
-        flush=True
-    )
-
-    if not posts_to_run:
+    if not new:
         print("Nothing to publish.")
         return
 
-    with sync_playwright() as p:
+    p=new[0]
 
-        browser = p.chromium.launch(
-            headless=True
+    with sync_playwright() as x:
+        browser=x.chromium.launch(headless=True)
+        page=browser.new_page(
+            viewport={"width":1280,"height":900}
         )
-
-        context = browser.new_context(
-            viewport={
-                "width": 1280,
-                "height": 900
-            },
-            user_agent=(
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/122.0.0.0 Safari/537.36"
-            )
-        )
-
-        page = context.new_page()
 
         try:
-
             login(page)
 
-            for post in posts_to_run:
-
-                try:
-
-                    success = publish(
-                        page,
-                        post
-                    )
-
-                    if success:
-
-                        synced.add(post["id"])
-                        save_synced(synced)
-
-                        print(
-                            f"✓ SAVED AS SYNCED: {post['id']}",
-                            flush=True
-                        )
-
-                    else:
-
-                        print(
-                            "⚠️ NOT SAVED AS SYNCED.",
-                            flush=True
-                        )
-
-                except Exception as e:
-
-                    print(
-                        f"❌ Publish error: {e}",
-                        flush=True
-                    )
+            if publish(page,p):
+                done.add(p["id"])
+                save(done)
+                print("✓ SAVED:",p["id"])
+            else:
+                print("⚠ NOT SAVED")
 
         finally:
-
-            if os.path.exists(TEMP_IMAGE):
-
-                try:
-                    os.remove(TEMP_IMAGE)
-                except Exception:
-                    pass
-
             browser.close()
 
-    print("=" * 60)
-    print("SYNC COMPLETED")
-    print("=" * 60)
+    print("DONE")
 
-
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
-    
