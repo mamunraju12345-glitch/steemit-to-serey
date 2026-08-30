@@ -165,7 +165,7 @@ def get_posts():
     start_author = None
     start_permlink = None
 
-    while len(posts) < 1000:
+    while len(posts) < 5000:
 
         params = {
             "tag": STEEM_USERNAME,
