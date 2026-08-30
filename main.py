@@ -42,6 +42,10 @@ DEAD_IMAGE_DOMAINS = [
 DATA_FILE = "synced_posts.json"
 TEMP_IMG_FILE = "temp_thumbnail.jpg"
 
+# Serey Bengali Server URLs
+SEREY_BASE_URL = "https://bengali.serey.io"
+SEREY_POST_NEW_URL = "https://bengali.serey.io/blog/post/new"
+
 # প্রতি GitHub Actions run-এ কয়টি পোস্ট publish করবে
 POSTS_PER_RUN = 1
 
@@ -615,7 +619,7 @@ def verify_serey_post(
     title = post["title"].strip()
 
     print(
-        "\n🔎 VERIFYING POST ON SEREY...",
+        "\n🔎 VERIFYING POST ON SEREY (BENGALI)...",
         flush=True
     )
 
@@ -672,9 +676,9 @@ def verify_serey_post(
 
     profile_urls = [
 
-        f"https://serey.io/authors/{SEREY_LOGIN}",
+        f"{SEREY_BASE_URL}/authors/{SEREY_LOGIN}",
 
-        f"https://serey.io/authors/@{SEREY_LOGIN}"
+        f"{SEREY_BASE_URL}/authors/@{SEREY_LOGIN}"
 
     ]
 
@@ -750,7 +754,7 @@ def verify_serey_post(
 
 
         page.goto(
-            "https://serey.io",
+            SEREY_BASE_URL,
             timeout=30000,
             wait_until="domcontentloaded"
         )
@@ -793,7 +797,7 @@ def verify_serey_post(
                     if href:
 
                         if href.startswith("/"):
-                            href = "https://serey.io" + href
+                            href = SEREY_BASE_URL + href
 
                         page.goto(
                             href,
@@ -849,7 +853,7 @@ def publish_to_serey(
 ):
 
     print(
-        f"\n---> Publishing to Serey: "
+        f"\n---> Publishing to Serey (Bengali): "
         f"{post['title']}",
         flush=True
     )
@@ -858,7 +862,7 @@ def publish_to_serey(
     try:
 
         page.goto(
-            "https://serey.io/blog/post/new",
+            SEREY_POST_NEW_URL,
             timeout=60000
         )
 
@@ -1151,7 +1155,7 @@ def main():
 
 
     print(
-        "       STEEMIT -> SEREY AUTOMATION",
+        "       STEEMIT -> SEREY AUTOMATION (BENGALI)",
         flush=True
     )
 
@@ -1276,7 +1280,7 @@ def main():
         # ----------------------------------------------------
 
         print(
-            "\nLogging into Serey.io...",
+            "\nLogging into Serey.io (Bengali)...",
             flush=True
         )
 
@@ -1284,7 +1288,7 @@ def main():
         try:
 
             page.goto(
-                "https://serey.io",
+                SEREY_BASE_URL,
                 timeout=60000
             )
 
