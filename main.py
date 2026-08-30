@@ -3,7 +3,6 @@ import json
 import re
 import time
 import requests
-from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 
 
@@ -151,30 +150,25 @@ def clean_post(body, metadata):
 
 
 # ============================================================
-# GET STEEM POSTS
+# GET STEEM POSTS - LAST 1 YEAR ONLY
 # ============================================================
 
 def get_posts():
     print(
-        f"Getting posts from @{STEEM_USERNAME}...",
+        f"Getting posts from @{STEEM_USERNAME} from the last 1 year...",
         flush=True
     )
+
+    from datetime import datetime, timezone, timedelta
 
     posts = []
     seen = set()
 
+    # Exactly 1 year back from now
+    one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
+
     start_author = None
     start_permlink = None
-
-    # ONLY LAST 1 YEAR
-    one_year_ago = datetime.now(
-        timezone.utc
-    ) - timedelta(days=365)
-
-    print(
-        f"Only posts since: {one_year_ago.strftime('%Y-%m-%d %H:%M:%S UTC')}",
-        flush=True
-    )
 
     while len(posts) < 5000:
 
@@ -207,38 +201,29 @@ def get_posts():
             if p.get("author") != STEEM_USERNAME:
                 continue
 
-            # ====================================================
-            # ONE YEAR DATE FILTER
-            # ====================================================
-
-            created = p.get("created", "")
-
-            if created:
-
-                try:
-
-                    post_date = datetime.strptime(
-                        created,
-                        "%Y-%m-%dT%H:%M:%S"
-                    ).replace(
-                        tzinfo=timezone.utc
-                    )
-
-                    # Since API gives newest -> oldest,
-                    # once we reach older than 1 year,
-                    # we can stop collecting older posts.
-                    if post_date < one_year_ago:
-
-                        reached_old_posts = True
-                        continue
-
-                except Exception:
-                    pass
-
             author = p.get("author", "")
             permlink = p.get("permlink", "")
 
             if not permlink:
+                continue
+
+            # ------------------------------------------------
+            # CHECK POST DATE
+            # ------------------------------------------------
+
+            created = p.get("created", "")
+
+            try:
+                post_time = datetime.fromisoformat(
+                    created.replace("Z", "+00:00")
+                )
+            except Exception:
+                continue
+
+            # Since posts are returned newest -> oldest,
+            # once we reach older than 1 year, stop collecting.
+            if post_time < one_year_ago:
+                reached_old_posts = True
                 continue
 
             pid = f"{author}/{permlink}"
@@ -258,11 +243,12 @@ def get_posts():
                 "title": p.get("title", "").strip(),
                 "body": body,
                 "image": image,
-                "category": p.get("category", "")
+                "category": p.get("category", ""),
+                "created": created
             })
 
-        # If we reached posts older than one year,
-        # stop requesting older pages.
+        # If this batch has reached posts older than 1 year,
+        # there is no need to request more pages.
         if reached_old_posts:
             break
 
@@ -285,12 +271,14 @@ def get_posts():
 
         time.sleep(0.3)
 
+    # --------------------------------------------------------
     # IMPORTANT:
-    # API returns newest -> oldest.
-    # Reverse makes it oldest -> newest.
-    # So publishing starts from around 1 year ago
-    # and gradually moves toward the latest post.
-    posts.reverse()
+    # Oldest -> Newest
+    # --------------------------------------------------------
+
+    posts.sort(
+        key=lambda x: x.get("created", "")
+    )
 
     print(
         f"Total posts in last 1 year: {len(posts)}",
@@ -400,6 +388,9 @@ def select_category(page, steem_category):
         flush=True
     )
 
+    # Serey may automatically suggest a category.
+    # First look for the category selection area.
+
     try:
 
         text = page.locator("body").inner_text(
@@ -415,6 +406,7 @@ def select_category(page, steem_category):
     except Exception:
         pass
 
+    # Find "Select category"
     selector = page.get_by_text(
         "Select category",
         exact=True
@@ -433,6 +425,7 @@ def select_category(page, steem_category):
 
         page.wait_for_timeout(1000)
 
+        # Try exact Steem category first
         option = page.get_by_text(
             steem_category,
             exact=True
@@ -448,6 +441,7 @@ def select_category(page, steem_category):
 
             return True
 
+        # Try text matching ignoring case
         options = page.locator(
             '[role="option"]'
         )
@@ -565,9 +559,11 @@ def verify(page, title):
             flush=True
         )
 
+        # Must leave /blog/post/new
         if "/blog/post/new" in url:
             continue
 
+        # Expected Serey author post URL
         if "/authors/" in url:
 
             print(
@@ -577,6 +573,7 @@ def verify(page, title):
 
             return True
 
+        # Fallback: title exists on page
         try:
 
             body = page.locator("body").inner_text()
@@ -870,3 +867,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
