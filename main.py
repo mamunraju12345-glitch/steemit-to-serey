@@ -33,6 +33,12 @@ STEEM_NODES = [
     "https://api.steemitdev.com",
 ]
 
+# বন্ধ বা কাজ না করা ইমেজ ডোমেইনের তালিকা
+DEAD_IMAGE_DOMAINS = [
+    "img.esteem.ws",
+    "esteem.ws"
+]
+
 DATA_FILE = "synced_posts.json"
 TEMP_IMG_FILE = "temp_thumbnail.jpg"
 
@@ -153,6 +159,12 @@ def save_synced_posts(posts):
 # IMAGE + BODY CLEANING
 # ============================================================
 
+def is_dead_domain(url):
+    if not url:
+        return True
+    return any(domain in url.lower() for domain in DEAD_IMAGE_DOMAINS)
+
+
 def extract_image_and_clean_body(
     body_text,
     json_metadata_str
@@ -176,10 +188,10 @@ def extract_image_and_clean_body(
             and
             meta["image"]
         ):
-
-            first_image_url = (
-                meta["image"][0]
-            )
+            for img in meta["image"]:
+                if not is_dead_domain(img):
+                    first_image_url = img
+                    break
 
     except Exception:
         pass
@@ -187,26 +199,30 @@ def extract_image_and_clean_body(
 
     if not first_image_url:
 
-        match = re.search(
+        matches = re.findall(
             r'!\[[^\]]*\]\((https?://[^)\s]+)\)',
             body_text,
             re.IGNORECASE
         )
 
-        if match:
-            first_image_url = match.group(1)
+        for img in matches:
+            if not is_dead_domain(img):
+                first_image_url = img
+                break
 
 
     if not first_image_url:
 
-        match = re.search(
+        matches = re.findall(
             r'https?://[^\s<>"\']+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s<>"\']*)?',
             body_text,
             re.IGNORECASE
         )
 
-        if match:
-            first_image_url = match.group(0)
+        for img in matches:
+            if not is_dead_domain(img):
+                first_image_url = img
+                break
 
 
     clean_body = body_text
@@ -495,9 +511,9 @@ def get_recent_posts():
 
 def download_image(image_url):
 
-    if not image_url:
+    if not image_url or is_dead_domain(image_url):
+        print(f"Skipping dead or missing image domain: {image_url}", flush=True)
         return None
-
 
     try:
 
@@ -509,7 +525,7 @@ def download_image(image_url):
 
         response = requests.get(
             image_url,
-            timeout=20,
+            timeout=15,
             headers={
                 "User-Agent": "Mozilla/5.0"
             }
@@ -608,50 +624,39 @@ def verify_serey_post(
         flush=True
     )
 
+    # --------------------------------------------------------
+    # 0. Strict URL Guard: Check if stuck on edit page
+    # --------------------------------------------------------
+    current_url = page.url
+    print(f"Current Serey URL: {current_url}", flush=True)
+
+    if "blog/post/new" in current_url:
+        print("❌ FAILED: Browser is still stuck on post creation page (/blog/post/new).", flush=True)
+        return False
+
+    normalized_title = normalize_text(title)
 
     # --------------------------------------------------------
-    # First check current page
+    # 1. Check if redirected to published post URL
     # --------------------------------------------------------
-
     try:
 
-        page.wait_for_timeout(
-            5000
-        )
-
-        current_url = page.url
-
-        print(
-            f"Current Serey URL: {current_url}",
-            flush=True
-        )
-
-
+        page.wait_for_timeout(3000)
         html = page.content()
-
-
-        normalized_html = normalize_text(
-            html
-        )
-
-        normalized_title = normalize_text(
-            title
-        )
-
+        normalized_html = normalize_text(html)
 
         if (
             normalized_title
-            and
-            normalized_title in normalized_html
+            and normalized_title in normalized_html
+            and ("/authors/" in page.url or "/blog/post/" in page.url)
         ):
 
             print(
-                "✅ TITLE FOUND ON CURRENT SEREY PAGE!",
+                f"✅ POST PAGE VERIFIED! URL: {page.url}",
                 flush=True
             )
 
             return True
-
 
     except Exception as e:
 
@@ -662,7 +667,7 @@ def verify_serey_post(
 
 
     # --------------------------------------------------------
-    # Open author's profile
+    # 2. Open author's profile
     # --------------------------------------------------------
 
     profile_urls = [
@@ -691,9 +696,7 @@ def verify_serey_post(
             )
 
 
-            page.wait_for_timeout(
-                5000
-            )
+            page.wait_for_timeout(5000)
 
 
             profile_html = page.content()
@@ -714,8 +717,7 @@ def verify_serey_post(
             ):
 
                 print(
-                    "✅ POST TITLE FOUND ON "
-                    "SEREY PROFILE!",
+                    "✅ POST TITLE FOUND ON SEREY PROFILE!",
                     flush=True
                 )
 
@@ -736,7 +738,7 @@ def verify_serey_post(
 
 
     # --------------------------------------------------------
-    # Search page links for matching title
+    # 3. Search page links for matching title
     # --------------------------------------------------------
 
     try:
@@ -754,22 +756,15 @@ def verify_serey_post(
         )
 
 
-        page.wait_for_timeout(
-            4000
-        )
+        page.wait_for_timeout(4000)
 
 
-        links = page.locator(
-            "a"
-        )
-
+        links = page.locator("a")
 
         link_count = links.count()
 
 
-        for i in range(
-            min(link_count, 300)
-        ):
+        for i in range(min(link_count, 300)):
 
             try:
 
@@ -790,71 +785,34 @@ def verify_serey_post(
                     normalize_text(text)
                 ):
 
-                    href = link.get_attribute(
-                        "href"
-                    )
+                    href = link.get_attribute("href")
 
-
-                    print(
-                        "✅ MATCHING POST LINK "
-                        "FOUND ON SEREY!",
-                        flush=True
-                    )
-
-
-                    print(
-                        f"Link: {href}",
-                        flush=True
-                    )
-
+                    print("✅ MATCHING POST LINK FOUND ON SEREY!", flush=True)
+                    print(f"Link: {href}", flush=True)
 
                     if href:
 
-                        if href.startswith(
-                            "/"
-                        ):
-
-                            href = (
-                                "https://serey.io"
-                                + href
-                            )
-
+                        if href.startswith("/"):
+                            href = "https://serey.io" + href
 
                         page.goto(
                             href,
                             timeout=30000
                         )
 
-
-                        page.wait_for_timeout(
-                            4000
-                        )
-
+                        page.wait_for_timeout(4000)
 
                         post_html = page.content()
-
 
                         if (
                             normalize_text(title)
                             in
-                            normalize_text(
-                                post_html
-                            )
+                            normalize_text(post_html)
                         ):
 
-                            print(
-                                "✅ POST PAGE VERIFIED!",
-                                flush=True
-                            )
-
-                            print(
-                                f"Verified URL: "
-                                f"{page.url}",
-                                flush=True
-                            )
-
+                            print("✅ POST PAGE VERIFIED!", flush=True)
+                            print(f"Verified URL: {page.url}", flush=True)
                             return True
-
 
             except Exception:
                 continue
@@ -874,8 +832,7 @@ def verify_serey_post(
     )
 
     print(
-        "Post will NOT be added to "
-        "synced_posts.json.",
+        "Post will NOT be added to synced_posts.json.",
         flush=True
     )
 
@@ -906,9 +863,7 @@ def publish_to_serey(
         )
 
 
-        page.wait_for_timeout(
-            4000
-        )
+        page.wait_for_timeout(4000)
 
 
         # ----------------------------------------------------
@@ -954,9 +909,7 @@ def publish_to_serey(
         )
 
 
-        page.wait_for_timeout(
-            2000
-        )
+        page.wait_for_timeout(2000)
 
 
         # ----------------------------------------------------
@@ -992,9 +945,7 @@ def publish_to_serey(
                         )
 
 
-                        page.wait_for_timeout(
-                            4000
-                        )
+                        page.wait_for_timeout(4000)
 
                     else:
 
@@ -1029,9 +980,7 @@ def publish_to_serey(
         )
 
 
-        page.wait_for_timeout(
-            6000
-        )
+        page.wait_for_timeout(6000)
 
 
         # ----------------------------------------------------
@@ -1052,9 +1001,7 @@ def publish_to_serey(
             )
 
 
-            page.wait_for_timeout(
-                1500
-            )
+            page.wait_for_timeout(1500)
 
 
             option = page.locator(
@@ -1091,8 +1038,7 @@ def publish_to_serey(
         except Exception:
 
             print(
-                "  - Category auto-selecting "
-                "via keyboard...",
+                "  - Category auto-selecting via keyboard...",
                 flush=True
             )
 
@@ -1110,9 +1056,7 @@ def publish_to_serey(
             )
 
 
-        page.wait_for_timeout(
-            2000
-        )
+        page.wait_for_timeout(2000)
 
 
         # ----------------------------------------------------
@@ -1138,9 +1082,7 @@ def publish_to_serey(
 
 
         # Give Serey enough time
-        page.wait_for_timeout(
-            12000
-        )
+        page.wait_for_timeout(12000)
 
 
         # ----------------------------------------------------
@@ -1156,8 +1098,7 @@ def publish_to_serey(
         if verified:
 
             print(
-                f"\n✅ VERIFIED & CONFIRMED: "
-                f"{post['title']}",
+                f"\n✅ VERIFIED & CONFIRMED: {post['title']}",
                 flush=True
             )
 
@@ -1165,8 +1106,7 @@ def publish_to_serey(
 
 
         print(
-            f"\n❌ PUBLISH NOT VERIFIED: "
-            f"{post['title']}",
+            f"\n❌ PUBLISH NOT VERIFIED: {post['title']}",
             flush=True
         )
 
@@ -1177,8 +1117,7 @@ def publish_to_serey(
     except Exception as e:
 
         print(
-            f"\n❌ Failed to publish post "
-            f"on Serey: {e}",
+            f"\n❌ Failed to publish post on Serey: {e}",
             flush=True
         )
 
@@ -1188,15 +1127,11 @@ def publish_to_serey(
 
     finally:
 
-        if os.path.exists(
-            TEMP_IMG_FILE
-        ):
+        if os.path.exists(TEMP_IMG_FILE):
 
             try:
 
-                os.remove(
-                    TEMP_IMG_FILE
-                )
+                os.remove(TEMP_IMG_FILE)
 
             except Exception:
 
@@ -1233,8 +1168,7 @@ def main():
 
 
     print(
-        f"Previously synced posts: "
-        f"{len(synced_posts)}",
+        f"Previously synced posts: {len(synced_posts)}",
         flush=True
     )
 
@@ -1269,15 +1203,13 @@ def main():
 
 
     print(
-        f"Total posts fetched: "
-        f"{len(posts)}",
+        f"Total posts fetched: {len(posts)}",
         flush=True
     )
 
 
     print(
-        f"Unsynced posts available: "
-        f"{len(new_posts)}",
+        f"Unsynced posts available: {len(new_posts)}",
         flush=True
     )
 
@@ -1292,8 +1224,7 @@ def main():
 
 
     print(
-        f"Publishing this run: "
-        f"{len(new_posts_to_run)} post(s)",
+        f"Publishing this run: {len(new_posts_to_run)} post(s)",
         flush=True
     )
 
@@ -1358,9 +1289,7 @@ def main():
             )
 
 
-            page.wait_for_timeout(
-                4000
-            )
+            page.wait_for_timeout(4000)
 
 
             print(
@@ -1379,9 +1308,7 @@ def main():
             )
 
 
-            page.wait_for_timeout(
-                5000
-            )
+            page.wait_for_timeout(5000)
 
 
             page.wait_for_selector(
@@ -1416,9 +1343,7 @@ def main():
             )
 
 
-            page.wait_for_timeout(
-                6000
-            )
+            page.wait_for_timeout(6000)
 
 
             print(
@@ -1471,8 +1396,7 @@ def main():
 
 
                 print(
-                    f"✅ Saved as synced: "
-                    f"{post_id}",
+                    f"✅ Saved as synced: {post_id}",
                     flush=True
                 )
 
@@ -1485,9 +1409,7 @@ def main():
                 )
 
                 print(
-                    "It will remain unsynced "
-                    "and can be retried "
-                    "on the next run.",
+                    "It will remain unsynced and can be retried on the next run.",
                     flush=True
                 )
 
