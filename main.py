@@ -217,6 +217,12 @@ def get_posts():
                 post_time = datetime.fromisoformat(
                     created.replace("Z", "+00:00")
                 )
+
+                if post_time.tzinfo is None:
+                    post_time = post_time.replace(
+                        tzinfo=timezone.utc
+                    )
+
             except Exception:
                 continue
 
@@ -314,7 +320,8 @@ def download_image(url):
         r.raise_for_status()
 
         if "image" not in r.headers.get(
-            "content-type", ""
+            "content-type",
+            ""
         ).lower():
             return None
 
@@ -867,4 +874,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
