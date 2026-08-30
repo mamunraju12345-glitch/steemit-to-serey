@@ -19,6 +19,9 @@ SEREY_LOGIN = os.environ.get(
 
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
+# Pexels API key is used ONLY as thumbnail fallback
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "").strip()
+
 SEREY = "https://bengali.serey.io"
 NEW_POST = f"{SEREY}/blog/post/new"
 
@@ -293,6 +296,126 @@ def download_image(url):
 
 
 # ============================================================
+# PEXELS THUMBNAIL FALLBACK
+# ============================================================
+
+def download_pexels_image(title, category):
+
+    if not PEXELS_API_KEY:
+        print(
+            "PEXELS_API_KEY not available.",
+            flush=True
+        )
+        return None
+
+    # Use the Steem post title first.
+    # If title is too long, also include the category.
+    query = title.strip()
+
+    if category and category.lower() not in query.lower():
+        query = f"{query} {category}"
+
+    # Keep the search query reasonable.
+    query = re.sub(r"\s+", " ", query).strip()
+    query = query[:150]
+
+    if not query:
+        query = category.strip() or "photography"
+
+    try:
+
+        print(
+            f"Pexels fallback search: {query}",
+            flush=True
+        )
+
+        response = requests.get(
+            "https://api.pexels.com/v1/search",
+            headers={
+                "Authorization": PEXELS_API_KEY
+            },
+            params={
+                "query": query,
+                "orientation": "landscape",
+                "size": "large",
+                "per_page": 1
+            },
+            timeout=30
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        photos = data.get("photos", [])
+
+        if not photos:
+            print(
+                "No Pexels image found.",
+                flush=True
+            )
+            return None
+
+        photo = photos[0]
+
+        image_url = (
+            photo.get("src", {}).get("large")
+            or photo.get("src", {}).get("original")
+        )
+
+        if not image_url:
+            print(
+                "Pexels image URL not found.",
+                flush=True
+            )
+            return None
+
+        print(
+            f"Downloading Pexels image: {image_url}",
+            flush=True
+        )
+
+        image_response = requests.get(
+            image_url,
+            timeout=30,
+            headers={
+                "User-Agent": "Mozilla/5.0"
+            }
+        )
+
+        image_response.raise_for_status()
+
+        if "image" not in image_response.headers.get(
+            "content-type",
+            ""
+        ).lower():
+            print(
+                "Pexels response is not an image.",
+                flush=True
+            )
+            return None
+
+        with open(TEMP_IMAGE, "wb") as f:
+            f.write(image_response.content)
+
+        print(
+            "✓ Pexels thumbnail downloaded",
+            flush=True
+        )
+
+        return TEMP_IMAGE
+
+    except Exception as e:
+
+        print(
+            f"Pexels image failed: {e}",
+            flush=True
+        )
+
+        return None
+
+
+# ============================================================
 # LOGIN
 # ============================================================
 
@@ -349,9 +472,6 @@ def select_category(page, steem_category):
         flush=True
     )
 
-    # Serey may automatically suggest a category.
-    # First look for the category selection area.
-
     try:
 
         text = page.locator("body").inner_text(
@@ -367,7 +487,6 @@ def select_category(page, steem_category):
     except Exception:
         pass
 
-    # Find "Select category"
     selector = page.get_by_text(
         "Select category",
         exact=True
@@ -386,7 +505,6 @@ def select_category(page, steem_category):
 
         page.wait_for_timeout(1000)
 
-        # Try exact Steem category first
         option = page.get_by_text(
             steem_category,
             exact=True
@@ -402,7 +520,6 @@ def select_category(page, steem_category):
 
             return True
 
-        # Try text matching ignoring case
         options = page.locator(
             '[role="option"]'
         )
@@ -520,11 +637,9 @@ def verify(page, title):
             flush=True
         )
 
-        # Must leave /blog/post/new
         if "/blog/post/new" in url:
             continue
 
-        # Expected Serey author post URL
         if "/authors/" in url:
 
             print(
@@ -534,7 +649,6 @@ def verify(page, title):
 
             return True
 
-        # Fallback: title exists on page
         try:
 
             body = page.locator("body").inner_text()
@@ -602,8 +716,26 @@ def publish(page, post):
         flush=True
     )
 
+    # ========================================================
     # THUMBNAIL
+    # ========================================================
+
+    # First: use original Steemit image exactly as before.
     image = download_image(post.get("image"))
+
+    # Only if original image is unavailable/download fails,
+    # use Pexels as a fallback.
+    if not image:
+
+        print(
+            "Original thumbnail unavailable.",
+            flush=True
+        )
+
+        image = download_pexels_image(
+            post.get("title", ""),
+            post.get("category", "")
+        )
 
     if image:
 
