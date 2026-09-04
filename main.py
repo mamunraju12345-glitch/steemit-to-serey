@@ -4,6 +4,7 @@ import re
 import time
 import requests
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright
 
 
@@ -34,6 +35,7 @@ STEEM_NODES = [
     "https://api.moecki.online",
     "https://steem.619.io",
 ]
+
 
 # ============================================================
 # STEEM RPC
@@ -66,7 +68,10 @@ def rpc(method, params):
             return data["result"]
 
         except Exception as e:
-            print(f"RPC failed: {e}", flush=True)
+            print(
+                f"RPC failed: {e}",
+                flush=True
+            )
 
     raise Exception("All Steem RPC nodes failed")
 
@@ -80,8 +85,12 @@ def load_synced():
         return set()
 
     try:
-        with open(SYNC_FILE, encoding="utf-8") as f:
+        with open(
+            SYNC_FILE,
+            encoding="utf-8"
+        ) as f:
             return set(json.load(f))
+
     except Exception:
         return set()
 
@@ -105,12 +114,19 @@ def save_synced(data):
 # ============================================================
 
 def clean_post(body, metadata):
+
     image = None
 
     try:
-        meta = json.loads(metadata or "{}")
+        meta = json.loads(
+            metadata or "{}"
+        )
 
-        for x in meta.get("image", []):
+        for x in meta.get(
+            "image",
+            []
+        ):
+
             if isinstance(x, str):
                 image = x
                 break
@@ -119,6 +135,7 @@ def clean_post(body, metadata):
         pass
 
     if not image:
+
         m = re.search(
             r'!\[[^\]]*\]\((https?://[^)\s]+)\)',
             body,
@@ -155,6 +172,7 @@ def clean_post(body, metadata):
 # ============================================================
 
 def get_posts():
+
     print(
         f"Getting posts from @{STEEM_USERNAME}...",
         flush=True
@@ -166,8 +184,11 @@ def get_posts():
     start_author = None
     start_permlink = None
 
-    # Only posts from the last 1 month
-    one_month_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    # Only posts from the last 30 days
+    one_month_ago = (
+        datetime.now(timezone.utc)
+        - timedelta(days=30)
+    )
 
     while len(posts) < 5000:
 
@@ -177,6 +198,7 @@ def get_posts():
         }
 
         if start_author:
+
             params["start_author"] = start_author
             params["start_permlink"] = start_permlink
 
@@ -188,7 +210,11 @@ def get_posts():
         if not result:
             break
 
-        batch = result[1:] if start_author else result
+        batch = (
+            result[1:]
+            if start_author
+            else result
+        )
 
         if not batch:
             break
@@ -200,31 +226,53 @@ def get_posts():
             if p.get("author") != STEEM_USERNAME:
                 continue
 
-            author = p.get("author", "")
-            permlink = p.get("permlink", "")
+            author = p.get(
+                "author",
+                ""
+            )
+
+            permlink = p.get(
+                "permlink",
+                ""
+            )
 
             if not permlink:
                 continue
 
-            # Check post date
-            created = p.get("created", "")
+            # ------------------------------------------------
+            # POST DATE
+            # ------------------------------------------------
+
+            created = p.get(
+                "created",
+                ""
+            )
 
             try:
+
                 post_date = datetime.strptime(
                     created,
                     "%Y-%m-%dT%H:%M:%S"
-                ).replace(tzinfo=timezone.utc)
+                ).replace(
+                    tzinfo=timezone.utc
+                )
 
             except Exception:
+
                 continue
 
-            # Since posts are returned from newest to oldest,
-            # stop when we reach posts older than 1 month.
+            # ------------------------------------------------
+            # STOP WHEN POST IS OLDER THAN 30 DAYS
+            # ------------------------------------------------
+
             if post_date < one_month_ago:
+
                 reached_old_posts = True
                 break
 
-            pid = f"{author}/{permlink}"
+            pid = (
+                f"{author}/{permlink}"
+            )
 
             if pid in seen:
                 continue
@@ -232,16 +280,28 @@ def get_posts():
             seen.add(pid)
 
             body, image = clean_post(
-                p.get("body", ""),
-                p.get("json_metadata", "{}")
+                p.get(
+                    "body",
+                    ""
+                ),
+                p.get(
+                    "json_metadata",
+                    "{}"
+                )
             )
 
             posts.append({
                 "id": pid,
-                "title": p.get("title", "").strip(),
+                "title": p.get(
+                    "title",
+                    ""
+                ).strip(),
                 "body": body,
                 "image": image,
-                "category": p.get("category", "")
+                "category": p.get(
+                    "category",
+                    ""
+                )
             })
 
         if reached_old_posts:
@@ -249,12 +309,18 @@ def get_posts():
 
         last = result[-1]
 
-        new_author = last.get("author")
-        new_permlink = last.get("permlink")
+        new_author = last.get(
+            "author"
+        )
+
+        new_permlink = last.get(
+            "permlink"
+        )
 
         if (
             new_author == start_author
-            and new_permlink == start_permlink
+            and
+            new_permlink == start_permlink
         ):
             break
 
@@ -266,6 +332,7 @@ def get_posts():
 
         time.sleep(0.3)
 
+    # Oldest -> newest
     posts.reverse()
 
     print(
@@ -286,6 +353,7 @@ def download_image(url):
         return None
 
     try:
+
         print(
             f"Downloading image: {url}",
             flush=True
@@ -305,18 +373,27 @@ def download_image(url):
             "content-type",
             ""
         ).lower():
+
             return None
 
-        with open(TEMP_IMAGE, "wb") as f:
-            f.write(r.content)
+        with open(
+            TEMP_IMAGE,
+            "wb"
+        ) as f:
+
+            f.write(
+                r.content
+            )
 
         return TEMP_IMAGE
 
     except Exception as e:
+
         print(
             f"Image download failed: {e}",
             flush=True
         )
+
         return None
 
 
@@ -326,7 +403,10 @@ def download_image(url):
 
 def login(page):
 
-    print("Logging into Serey...", flush=True)
+    print(
+        "Logging into Serey...",
+        flush=True
+    )
 
     page.goto(
         SEREY,
@@ -334,31 +414,45 @@ def login(page):
         timeout=60000
     )
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(
+        3000
+    )
 
     page.locator(
         'a:has-text("Log in"),'
         'button:has-text("Log in"),'
         'a:has-text("Log In"),'
         'button:has-text("Log In")'
-    ).first.click(force=True)
+    ).first.click(
+        force=True
+    )
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(
+        3000
+    )
 
     page.locator(
         'input[placeholder*="Username"]'
-    ).first.fill(SEREY_LOGIN)
+    ).first.fill(
+        SEREY_LOGIN
+    )
 
     page.locator(
         'input[placeholder*="Private Key"]'
-    ).first.fill(SEREY_PASSWORD)
+    ).first.fill(
+        SEREY_PASSWORD
+    )
 
     page.locator(
         'button:has-text("Log in"),'
         'button:has-text("Log In")'
-    ).last.click(force=True)
+    ).last.click(
+        force=True
+    )
 
-    page.wait_for_timeout(6000)
+    page.wait_for_timeout(
+        6000
+    )
 
     print(
         "✓ LOGGED INTO SEREY SUCCESSFULLY!",
@@ -370,7 +464,10 @@ def login(page):
 # CATEGORY
 # ============================================================
 
-def select_category(page, steem_category):
+def select_category(
+    page,
+    steem_category
+):
 
     print(
         f"Steemit category: {steem_category}",
@@ -381,11 +478,18 @@ def select_category(page, steem_category):
     # First look for the category selection area.
 
     try:
-        text = page.locator("body").inner_text(
+
+        text = page.locator(
+            "body"
+        ).inner_text(
             timeout=5000
         )
 
-        if "Your post belongs to category:" in text:
+        if (
+            "Your post belongs to category:"
+            in text
+        ):
+
             print(
                 "Serey suggested category automatically.",
                 flush=True
@@ -402,25 +506,40 @@ def select_category(page, steem_category):
     ).first
 
     if selector.count() == 0:
+
         print(
             "No category selector. Continuing.",
             flush=True
         )
+
         return False
 
     try:
-        selector.click(force=True)
 
-        page.wait_for_timeout(1000)
+        selector.click(
+            force=True
+        )
+
+        page.wait_for_timeout(
+            1000
+        )
 
         # Try exact Steem category first
+
         option = page.get_by_text(
             steem_category,
             exact=True
         ).last
 
-        if option.count() > 0 and option.is_visible():
-            option.click(force=True)
+        if (
+            option.count() > 0
+            and
+            option.is_visible()
+        ):
+
+            option.click(
+                force=True
+            )
 
             print(
                 f"✓ Category selected: {steem_category}",
@@ -430,11 +549,14 @@ def select_category(page, steem_category):
             return True
 
         # Try text matching ignoring case
+
         options = page.locator(
             '[role="option"]'
         )
 
-        for i in range(options.count()):
+        for i in range(
+            options.count()
+        ):
 
             item = options.nth(i)
 
@@ -443,9 +565,15 @@ def select_category(page, steem_category):
 
             txt = item.inner_text().strip()
 
-            if txt.lower() == steem_category.lower():
+            if (
+                txt.lower()
+                ==
+                steem_category.lower()
+            ):
 
-                item.click(force=True)
+                item.click(
+                    force=True
+                )
 
                 print(
                     f"✓ Category selected: {txt}",
@@ -483,15 +611,21 @@ def select_subcategory(page):
         ).first
 
         if selector.count() == 0:
+
             print(
                 "No Sub Category selector.",
                 flush=True
             )
+
             return
 
-        selector.click(force=True)
+        selector.click(
+            force=True
+        )
 
-        page.wait_for_timeout(800)
+        page.wait_for_timeout(
+            800
+        )
 
         options = page.locator(
             '[role="option"]'
@@ -499,17 +633,23 @@ def select_subcategory(page):
 
         if options.count() > 0:
 
-            for i in range(options.count()):
+            for i in range(
+                options.count()
+            ):
 
                 option = options.nth(i)
 
                 if option.is_visible():
-                    option.click(force=True)
+
+                    option.click(
+                        force=True
+                    )
 
                     print(
                         "✓ Sub Category selected.",
                         flush=True
                     )
+
                     return
 
         print(
@@ -529,16 +669,28 @@ def select_subcategory(page):
 # VERIFY
 # ============================================================
 
-def verify(page, title):
+def verify(
+    page,
+    title
+):
 
     print(
         "VERIFYING PUBLISHED POST...",
         flush=True
     )
 
-    for _ in range(3):
+    # Give Serey enough time
+    # to finish publishing.
 
-        page.wait_for_timeout(5000)
+    page.wait_for_timeout(
+        15000
+    )
+
+    for _ in range(5):
+
+        page.wait_for_timeout(
+            3000
+        )
 
         url = page.url
 
@@ -547,30 +699,114 @@ def verify(page, title):
             flush=True
         )
 
-        # Must leave /blog/post/new
-        if "/blog/post/new" in url:
-            continue
+        # ----------------------------------------------------
+        # EXPECTED PUBLISHED POST URL
+        #
+        # Example:
+        # https://serey.io/authors/mamun/8s6x4vp1zn...
+        # ----------------------------------------------------
 
-        # Expected Serey author post URL
-        if "/authors/" in url:
+        if re.match(
+            r"https://(?:bengali\.)?serey\.io/authors/[^/]+/[^/]+",
+            url,
+            re.I
+        ):
 
             print(
                 "✓ POST URL FOUND!",
                 flush=True
             )
 
+            print(
+                f"✓ PUBLISHED URL: {url}",
+                flush=True
+            )
+
             return True
 
-        # Fallback: title exists on page
+        # ----------------------------------------------------
+        # CHECK LINKS ON CURRENT PAGE
+        # ----------------------------------------------------
+
         try:
 
-            body = page.locator("body").inner_text()
+            links = page.locator(
+                "a[href]"
+            )
 
-            if title.lower() in body.lower():
+            for i in range(
+                links.count()
+            ):
+
+                link = links.nth(i)
+
+                if not link.is_visible():
+                    continue
+
+                href = (
+                    link.get_attribute(
+                        "href"
+                    )
+                    or
+                    ""
+                )
+
+                text = (
+                    link.inner_text()
+                    .strip()
+                )
+
+                # Relative Serey author post URL
+
+                if re.match(
+                    r"^/authors/[^/]+/[^/]+$",
+                    href,
+                    re.I
+                ):
+
+                    if (
+                        title.lower()
+                        in text.lower()
+                        or
+                        title.lower()
+                        in href.lower()
+                    ):
+
+                        post_url = urljoin(
+                            SEREY,
+                            href
+                        )
+
+                        print(
+                            f"✓ POST URL FOUND: {post_url}",
+                            flush=True
+                        )
+
+                        return True
+
+        except Exception:
+            pass
+
+        # ----------------------------------------------------
+        # CHECK PAGE TITLE
+        # ----------------------------------------------------
+
+        try:
+
+            body = page.locator(
+                "body"
+            ).inner_text()
+
+            if (
+                title.lower()
+                in body.lower()
+            ):
+
                 print(
                     "✓ POST TITLE FOUND!",
                     flush=True
                 )
+
                 return True
 
         except Exception:
@@ -588,9 +824,15 @@ def verify(page, title):
 # PUBLISH
 # ============================================================
 
-def publish(page, post):
+def publish(
+    page,
+    post
+):
 
-    print("-" * 60)
+    print(
+        "-" * 60
+    )
+
     print(
         f"Publishing: {post['title']}",
         flush=True
@@ -602,38 +844,53 @@ def publish(page, post):
         timeout=60000
     )
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(
+        3000
+    )
 
+    # ========================================================
     # TITLE
+    # ========================================================
 
     title = page.locator(
         'input[placeholder*="Title" i]'
     ).first
 
-    title.fill(post["title"])
+    title.fill(
+        post["title"]
+    )
 
     print(
         "✓ Title filled",
         flush=True
     )
 
+    # ========================================================
     # BODY
+    # ========================================================
 
     editor = page.locator(
         'div[contenteditable="true"]'
     ).first
 
     editor.click()
-    editor.fill(post["body"])
+
+    editor.fill(
+        post["body"]
+    )
 
     print(
         "✓ Body filled",
         flush=True
     )
 
+    # ========================================================
     # THUMBNAIL
+    # ========================================================
 
-    image = download_image(post.get("image"))
+    image = download_image(
+        post.get("image")
+    )
 
     if image:
 
@@ -649,7 +906,9 @@ def publish(page, post):
                     image
                 )
 
-                page.wait_for_timeout(3000)
+                page.wait_for_timeout(
+                    3000
+                )
 
                 print(
                     "✓ Thumbnail uploaded",
@@ -670,32 +929,46 @@ def publish(page, post):
             flush=True
         )
 
+    # ========================================================
     # FIRST PUBLISH
+    # ========================================================
 
     page.get_by_text(
         "Publish",
         exact=True
-    ).last.click(force=True)
+    ).last.click(
+        force=True
+    )
 
     print(
         "✓ FIRST PUBLISH CLICKED",
         flush=True
     )
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(
+        3000
+    )
 
+    # ========================================================
     # CATEGORY
+    # ========================================================
 
     select_category(
         page,
         post["category"]
     )
 
+    # ========================================================
     # SUB CATEGORY
+    # ========================================================
 
-    select_subcategory(page)
+    select_subcategory(
+        page
+    )
 
+    # ========================================================
     # FINAL PUBLISH
+    # ========================================================
 
     print(
         "Searching for FINAL Publish...",
@@ -708,16 +981,22 @@ def publish(page, post):
 
     final_button = None
 
-    for i in range(buttons.count()):
+    for i in range(
+        buttons.count()
+    ):
 
         b = buttons.nth(i)
 
         if not b.is_visible():
             continue
 
-        txt = b.inner_text().strip()
+        txt = (
+            b.inner_text()
+            .strip()
+        )
 
         if txt == "Publish":
+
             final_button = b
 
     if not final_button:
@@ -729,14 +1008,19 @@ def publish(page, post):
 
         return False
 
-    final_button.click(force=True)
+    final_button.click(
+        force=True
+    )
 
     print(
         "✓ FINAL PUBLISH CLICKED",
         flush=True
     )
 
-    page.wait_for_timeout(12000)
+    # Give Serey time to publish
+    page.wait_for_timeout(
+        15000
+    )
 
     return verify(
         page,
@@ -750,9 +1034,17 @@ def publish(page, post):
 
 def main():
 
-    print("=" * 60)
-    print("STEEM -> SEREY AUTO SYNC")
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
+
+    print(
+        "STEEM -> SEREY AUTO SYNC"
+    )
+
+    print(
+        "=" * 60
+    )
 
     synced = load_synced()
 
@@ -764,7 +1056,8 @@ def main():
     posts = get_posts()
 
     new_posts = [
-        p for p in posts
+        p
+        for p in posts
         if p["id"] not in synced
     ]
 
@@ -773,7 +1066,9 @@ def main():
         flush=True
     )
 
-    posts_to_run = new_posts[:POSTS_PER_RUN]
+    posts_to_run = (
+        new_posts[:POSTS_PER_RUN]
+    )
 
     print(
         f"Publishing this run: {len(posts_to_run)}",
@@ -781,7 +1076,11 @@ def main():
     )
 
     if not posts_to_run:
-        print("Nothing to publish.")
+
+        print(
+            "Nothing to publish."
+        )
+
         return
 
     with sync_playwright() as p:
@@ -791,10 +1090,12 @@ def main():
         )
 
         context = browser.new_context(
+
             viewport={
                 "width": 1280,
                 "height": 900
             },
+
             user_agent=(
                 "Mozilla/5.0 "
                 "(Windows NT 10.0; Win64; x64) "
@@ -808,7 +1109,9 @@ def main():
 
         try:
 
-            login(page)
+            login(
+                page
+            )
 
             for post in posts_to_run:
 
@@ -821,8 +1124,13 @@ def main():
 
                     if success:
 
-                        synced.add(post["id"])
-                        save_synced(synced)
+                        synced.add(
+                            post["id"]
+                        )
+
+                        save_synced(
+                            synced
+                        )
 
                         print(
                             f"✓ SAVED AS SYNCED: {post['id']}",
@@ -845,18 +1153,32 @@ def main():
 
         finally:
 
-            if os.path.exists(TEMP_IMAGE):
+            if os.path.exists(
+                TEMP_IMAGE
+            ):
 
                 try:
-                    os.remove(TEMP_IMAGE)
+
+                    os.remove(
+                        TEMP_IMAGE
+                    )
+
                 except Exception:
                     pass
 
             browser.close()
 
-    print("=" * 60)
-    print("SYNC COMPLETED")
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
+
+    print(
+        "SYNC COMPLETED"
+    )
+
+    print(
+        "=" * 60
+    )
 
 
 if __name__ == "__main__":
