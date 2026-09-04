@@ -31,13 +31,12 @@ jobs:
         run: |
           python -m playwright install --with-deps chromium
 
-      - name: Run Sync
-        env:
-          STEEM_USERNAME: ${{ secrets.STEEM_USERNAME }}
-          SEREY_LOGIN: ${{ secrets.SEREY_LOGIN }}
-          SEREY_PASSWORD: ${{ secrets.SEREY_PASSWORD }}
-        run: |
-          python main.py
+      - name: Run Serey Sync
+  env:
+    STEEM_USERNAME: ${{ secrets.STEEM_USERNAME }}
+    SEREY_USERNAME: ${{ secrets.SEREY_USERNAME }}
+    SEREY_PASSWORD: ${{ secrets.SEREY_PASSWORD }}
+  run: python main.py
 
       - name: Save Synced Posts
         run: |
