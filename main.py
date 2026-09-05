@@ -1,9 +1,8 @@
 import os
 import json
 import re
-import time
 import requests
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 
 # ============================================================
@@ -21,7 +20,6 @@ NEW_POST_URL = f"{SEREY}/blog/post/new"
 SYNC_FILE = "synced_posts.json"
 TEMP_IMAGE = "temp_image.jpg"
 
-# প্রতি Run-এ কয়টি পোস্ট publish করবে
 POSTS_PER_RUN = 1
 
 STEEM_NODES = [
@@ -35,6 +33,7 @@ STEEM_NODES = [
 # ============================================================
 
 def load_synced():
+
     if not os.path.exists(SYNC_FILE):
         return set()
 
@@ -45,14 +44,14 @@ def load_synced():
         if isinstance(data, list):
             return set(data)
 
-        return set()
-
     except Exception as e:
-        print(f"⚠️ synced_posts.json পড়তে সমস্যা: {e}", flush=True)
-        return set()
+        print(f"⚠️ synced_posts.json error: {e}", flush=True)
+
+    return set()
 
 
 def save_synced(data):
+
     try:
         with open(SYNC_FILE, "w", encoding="utf-8") as f:
             json.dump(
@@ -65,7 +64,7 @@ def save_synced(data):
         print("✓ Sync database updated.", flush=True)
 
     except Exception as e:
-        print(f"❌ Sync database save failed: {e}", flush=True)
+        print(f"❌ Database save failed: {e}", flush=True)
 
 
 # ============================================================
@@ -76,35 +75,36 @@ def clean_post(body):
 
     image_url = None
 
-    # Markdown image খুঁজবে
-    markdown_image = re.search(
+    # Markdown image
+    match = re.search(
         r'!\[[^\]]*\]\((https?://[^)\s]+)\)',
         body,
         re.I
     )
 
-    if markdown_image:
-        image_url = markdown_image.group(1)
+    if match:
+        image_url = match.group(1)
 
-    # সাধারণ image URL খুঁজবে
+    # Direct image URL
     if not image_url:
-        image_match = re.search(
+
+        match = re.search(
             r'https?://[^\s"\']+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s"\']*)?',
             body,
             re.I
         )
 
-        if image_match:
-            image_url = image_match.group(0)
+        if match:
+            image_url = match.group(0)
 
-    # Markdown image remove
+    # Remove markdown images
     clean_body = re.sub(
         r'!\[[^\]]*\]\([^)]+\)',
         '',
         body
     )
 
-    # সরাসরি image URL remove
+    # Remove image URLs
     clean_body = re.sub(
         r'https?://[^\s"\']+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s"\']*)?',
         '',
@@ -128,7 +128,7 @@ def download_image(url):
 
         print("⌛ থাম্বনেইল ডাউনলোড করা হচ্ছে...", flush=True)
 
-        response = requests.get(
+        r = requests.get(
             url,
             timeout=20,
             headers={
@@ -136,10 +136,10 @@ def download_image(url):
             }
         )
 
-        if response.status_code == 200:
+        if r.status_code == 200:
 
             with open(TEMP_IMAGE, "wb") as f:
-                f.write(response.content)
+                f.write(r.content)
 
             print("✓ থাম্বনেইল ডাউনলোড হয়েছে।", flush=True)
 
@@ -148,7 +148,7 @@ def download_image(url):
     except Exception as e:
 
         print(
-            f"⚠️ ইমেজ ডাউনলোড করা যায়নি: {e}",
+            f"⚠️ Image download failed: {e}",
             flush=True
         )
 
@@ -185,15 +185,15 @@ def get_steem_posts():
                 flush=True
             )
 
-            response = requests.post(
+            r = requests.post(
                 node,
                 json=payload,
                 timeout=30
             )
 
-            response.raise_for_status()
+            r.raise_for_status()
 
-            result = response.json().get(
+            result = r.json().get(
                 "result",
                 []
             )
@@ -225,16 +225,106 @@ def get_steem_posts():
                 flush=True
             )
 
-    print(
-        "❌ সব Steem RPC node failed.",
-        flush=True
-    )
-
     return []
 
 
 # ============================================================
-# FIND LOGIN STATE
+# LOGIN BUTTON FINDER
+# ============================================================
+
+def get_login_button(page):
+
+    # IMPORTANT:
+    # CSS selector এবং text locator আলাদা রাখা হয়েছে।
+
+    selectors = [
+        'button:has-text("Log in")',
+        'button:has-text("Log In")'
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            locator = page.locator(selector)
+
+            if locator.count() > 0:
+
+                for i in range(locator.count()):
+
+                    try:
+
+                        button = locator.nth(i)
+
+                        if button.is_visible(
+                            timeout=1000
+                        ):
+                            return button
+
+                    except:
+                        pass
+
+        except:
+            pass
+
+    # Text locator fallback
+    try:
+
+        locator = page.get_by_text(
+            "Log in",
+            exact=True
+        )
+
+        if locator.count() > 0:
+
+            for i in range(locator.count()):
+
+                try:
+
+                    item = locator.nth(i)
+
+                    if item.is_visible(
+                        timeout=1000
+                    ):
+                        return item
+
+                except:
+                    pass
+
+    except:
+        pass
+
+    try:
+
+        locator = page.get_by_text(
+            "Log In",
+            exact=True
+        )
+
+        if locator.count() > 0:
+
+            for i in range(locator.count()):
+
+                try:
+
+                    item = locator.nth(i)
+
+                    if item.is_visible(
+                        timeout=1000
+                    ):
+                        return item
+
+                except:
+                    pass
+
+    except:
+        pass
+
+    return None
+
+
+# ============================================================
+# CHECK LOGIN
 # ============================================================
 
 def is_logged_in(page):
@@ -247,31 +337,13 @@ def is_logged_in(page):
             timeout=90000
         )
 
-        page.wait_for_timeout(4000)
+        page.wait_for_timeout(5000)
 
-        # Login button থাকলে logged out
-        login_buttons = page.locator(
-            'button:has-text("Log in"), '
-            'button:has-text("Log In"), '
-            'text="Log in", '
-            'text="Log In"'
-        )
+        login_button = get_login_button(page)
 
-        if login_buttons.count() > 0:
+        if login_button is not None:
 
-            for i in range(
-                min(login_buttons.count(), 5)
-            ):
-
-                try:
-
-                    if login_buttons.nth(i).is_visible(
-                        timeout=1000
-                    ):
-                        return False
-
-                except:
-                    pass
+            return False
 
         return True
 
@@ -296,6 +368,10 @@ def login_serey(page):
         flush=True
     )
 
+    # --------------------------------------------------------
+    # Check existing session
+    # --------------------------------------------------------
+
     try:
 
         if is_logged_in(page):
@@ -310,6 +386,10 @@ def login_serey(page):
     except:
         pass
 
+    # --------------------------------------------------------
+    # Login
+    # --------------------------------------------------------
+
     print(
         "⌛ Serey-তে লগইন করা হচ্ছে...",
         flush=True
@@ -317,32 +397,33 @@ def login_serey(page):
 
     try:
 
-        page.goto(
-            SEREY,
-            wait_until="domcontentloaded",
-            timeout=90000
-        )
+        login_button = get_login_button(page)
 
-        page.wait_for_timeout(3000)
+        if login_button is None:
 
-        login_button = page.locator(
-            'button:has-text("Log in"), '
-            'button:has-text("Log In"), '
-            'text="Log in", '
-            'text="Log In"'
-        ).first
+            print(
+                "❌ Log in button পাওয়া যায়নি।",
+                flush=True
+            )
+
+            return False
 
         login_button.click(
             force=True,
-            timeout=10000
+            timeout=15000
         )
 
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(2500)
 
         # Username
         username_input = page.locator(
             'input[placeholder*="Username" i]'
         ).first
+
+        username_input.wait_for(
+            state="visible",
+            timeout=15000
+        )
 
         username_input.fill(
             SEREY_LOGIN
@@ -350,25 +431,93 @@ def login_serey(page):
 
         # Private Key / Password
         password_input = page.locator(
-            'input[placeholder*="Private Key" i], '
-            'input[type="password"]'
+            'input[placeholder*="Private Key" i]'
         ).first
+
+        if password_input.count() == 0:
+
+            password_input = page.locator(
+                'input[type="password"]'
+            ).first
+
+        password_input.wait_for(
+            state="visible",
+            timeout=15000
+        )
 
         password_input.fill(
             SEREY_PASSWORD
         )
 
-        # Login
-        page.locator(
-            'button:has-text("Log in"), '
-            'button:has-text("Log In")'
-        ).last.click(
-            force=True
+        # ----------------------------------------------------
+        # Login submit
+        # ----------------------------------------------------
+
+        login_submit = page.locator(
+            'button:has-text("Log in")'
         )
+
+        if login_submit.count() == 0:
+
+            login_submit = page.locator(
+                'button:has-text("Log In")'
+            )
+
+        if login_submit.count() == 0:
+
+            print(
+                "❌ Login submit button পাওয়া যায়নি।",
+                flush=True
+            )
+
+            return False
+
+        # শেষ visible login button
+        clicked = False
+
+        for i in range(
+            login_submit.count() - 1,
+            -1,
+            -1
+        ):
+
+            try:
+
+                btn = login_submit.nth(i)
+
+                if btn.is_visible(
+                    timeout=1000
+                ):
+
+                    btn.click(
+                        force=True,
+                        timeout=15000
+                    )
+
+                    clicked = True
+                    break
+
+            except:
+                pass
+
+        if not clicked:
+
+            print(
+                "❌ Login button click করা যায়নি।",
+                flush=True
+            )
+
+            return False
 
         page.wait_for_timeout(8000)
 
-        if is_logged_in(page):
+        # ----------------------------------------------------
+        # Verify login
+        # ----------------------------------------------------
+
+        login_button_after = get_login_button(page)
+
+        if login_button_after is None:
 
             print(
                 "✓ লগইন সম্পন্ন।",
@@ -378,7 +527,7 @@ def login_serey(page):
             return True
 
         print(
-            "❌ Serey login verify করা যায়নি।",
+            "❌ Login verify করা যায়নি।",
             flush=True
         )
 
@@ -395,17 +544,17 @@ def login_serey(page):
 
 
 # ============================================================
-# WAIT FOR PUBLISH MODAL
+# FIND PUBLISH BUTTONS
 # ============================================================
 
 def find_publish_buttons(page):
+
+    buttons = []
 
     selectors = [
         'button:has-text("Publish")',
         'button:has-text("publish")'
     ]
-
-    buttons = []
 
     for selector in selectors:
 
@@ -413,19 +562,16 @@ def find_publish_buttons(page):
 
             locator = page.locator(selector)
 
-            count = locator.count()
-
-            for i in range(count):
+            for i in range(locator.count()):
 
                 try:
 
-                    button = locator.nth(i)
+                    btn = locator.nth(i)
 
-                    if button.is_visible(
+                    if btn.is_visible(
                         timeout=500
                     ):
-
-                        buttons.append(button)
+                        buttons.append(btn)
 
                 except:
                     pass
@@ -433,7 +579,23 @@ def find_publish_buttons(page):
         except:
             pass
 
-    return buttons
+    # Duplicate element remove
+    unique = []
+
+    for btn in buttons:
+
+        try:
+
+            if not any(
+                btn == x
+                for x in unique
+            ):
+                unique.append(btn)
+
+        except:
+            unique.append(btn)
+
+    return unique
 
 
 # ============================================================
@@ -444,74 +606,87 @@ def click_final_publish(page):
 
     print(
         "⌛ AI ক্যাটাগরি প্রসেসিং হচ্ছে "
-        "(১ মিনিট পর্যন্ত অপেক্ষা)...",
+        "(৯০ সেকেন্ড পর্যন্ত অপেক্ষা)...",
         flush=True
     )
 
-    # সর্বোচ্চ 90 sec অপেক্ষা
     for attempt in range(18):
 
         page.wait_for_timeout(5000)
 
         buttons = find_publish_buttons(page)
 
-        # একাধিক Publish button থাকলে
-        # শেষ visible button ব্যবহার করা হবে
+        print(
+            f"🔎 Visible Publish buttons: {len(buttons)}",
+            flush=True
+        )
+
+        # ----------------------------------------------------
+        # সাধারণভাবে modal আসলে 2টি Publish button থাকবে
+        # ----------------------------------------------------
+
         if len(buttons) >= 2:
 
             try:
 
                 final_button = buttons[-1]
 
-                if final_button.is_visible(
-                    timeout=1000
-                ):
+                final_button.scroll_into_view_if_needed()
 
-                    print(
-                        "✓ ফাইনাল Publish button পাওয়া গেছে।",
-                        flush=True
-                    )
+                page.wait_for_timeout(1500)
 
-                    page.wait_for_timeout(2000)
+                final_button.click(
+                    force=True,
+                    timeout=15000
+                )
 
-                    final_button.click(
-                        force=True,
-                        timeout=15000
-                    )
+                print(
+                    "✓ ফাইনাল Publish বাটনে ক্লিক করা হয়েছে।",
+                    flush=True
+                )
 
-                    print(
-                        "✓ ফাইনাল Publish বাটনে ক্লিক করা হয়েছে।",
-                        flush=True
-                    )
-
-                    return True
+                return True
 
             except Exception as e:
 
                 print(
-                    f"⚠️ Final Publish click retry: {e}",
+                    f"⚠️ Final Publish retry: {e}",
                     flush=True
                 )
 
-        # কখনও modal-এ শুধু একটি visible button থাকতে পারে
+        # ----------------------------------------------------
+        # কিছু ক্ষেত্রে modal-এর button count আলাদা হতে পারে
+        # ----------------------------------------------------
+
         elif len(buttons) == 1:
 
             try:
 
-                button = buttons[0]
-
-                # নতুন modal আছে কিনা বোঝার চেষ্টা
-                text = page.locator(
+                body_text = page.locator(
                     "body"
-                ).inner_text(timeout=3000)
+                ).inner_text(
+                    timeout=3000
+                )
 
-                if (
-                    "AI" in text
-                    or "Category" in text
-                    or "category" in text
-                ):
+                category_words = [
+                    "AI category",
+                    "AI Category",
+                    "category",
+                    "Category"
+                ]
 
-                    button.click(
+                category_found = any(
+                    word in body_text
+                    for word in category_words
+                )
+
+                if category_found:
+
+                    buttons[0].scroll_into_view_if_needed()
+
+                    page.wait_for_timeout(1500)
+
+                    buttons[0].click(
                         force=True,
                         timeout=15000
                     )
@@ -527,13 +702,13 @@ def click_final_publish(page):
                 pass
 
         print(
-            f"⌛ Publish button অপেক্ষা... "
+            f"⌛ Final Publish অপেক্ষা... "
             f"{(attempt + 1) * 5}s",
             flush=True
         )
 
     print(
-        "❌ 90 সেকেন্ডেও Final Publish button পাওয়া যায়নি।",
+        "❌ Final Publish button পাওয়া যায়নি।",
         flush=True
     )
 
@@ -541,17 +716,17 @@ def click_final_publish(page):
 
 
 # ============================================================
-# VERIFY SUCCESS
+# VERIFY PUBLISHED POST
 # ============================================================
 
-def verify_publish(page, original_title):
+def verify_publish(page, title):
 
     print(
         "⌛ পোস্ট ভেরিফাই করা হচ্ছে...",
         flush=True
     )
 
-    # প্রথমে current page URL check
+    # 2 মিনিট পর্যন্ত verification
     for i in range(24):
 
         page.wait_for_timeout(5000)
@@ -559,12 +734,17 @@ def verify_publish(page, original_title):
         current_url = page.url
 
         print(
-            f"🔎 Verification {i + 1}/24: {current_url}",
+            f"🔎 Verification {i + 1}/24",
+            flush=True
+        )
+
+        print(
+            f"   URL: {current_url}",
             flush=True
         )
 
         # ----------------------------------------------------
-        # 1. URL থেকে success
+        # URL changed
         # ----------------------------------------------------
 
         if (
@@ -572,7 +752,6 @@ def verify_publish(page, original_title):
             and "/blog/post/new" not in current_url
         ):
 
-            # login / home page নয় কিনা
             if (
                 "/post/" in current_url
                 or "/blog/" in current_url
@@ -581,28 +760,30 @@ def verify_publish(page, original_title):
             ):
 
                 print(
-                    f"✅ পোস্ট সফলভাবে publish হয়েছে!",
+                    "✅ পোস্ট সফলভাবে publish হয়েছে!",
                     flush=True
                 )
 
                 print(
-                    f"🔗 URL: {current_url}",
+                    f"🔗 {current_url}",
                     flush=True
                 )
 
                 return True
 
         # ----------------------------------------------------
-        # 2. Success message
+        # Success text
         # ----------------------------------------------------
 
         try:
 
             body_text = page.locator(
                 "body"
-            ).inner_text(timeout=3000)
+            ).inner_text(
+                timeout=3000
+            )
 
-            success_words = [
+            success_messages = [
                 "Successfully posted",
                 "Successfully published",
                 "Post published",
@@ -612,9 +793,9 @@ def verify_publish(page, original_title):
                 "successfully posted"
             ]
 
-            for word in success_words:
+            for message in success_messages:
 
-                if word.lower() in body_text.lower():
+                if message.lower() in body_text.lower():
 
                     print(
                         "✅ Success message পাওয়া গেছে।",
@@ -627,15 +808,15 @@ def verify_publish(page, original_title):
             pass
 
         # ----------------------------------------------------
-        # 3. Title page-এ দেখা গেলে success
+        # Title found
         # ----------------------------------------------------
 
         try:
 
-            if original_title:
+            if title:
 
                 title_locator = page.get_by_text(
-                    original_title,
+                    title,
                     exact=False
                 )
 
@@ -651,20 +832,18 @@ def verify_publish(page, original_title):
                                 timeout=500
                             ):
 
-                                current_url = page.url
-
                                 if (
-                                    "/new" not in current_url
-                                    and current_url != NEW_POST_URL
+                                    page.url != NEW_POST_URL
+                                    and "/new" not in page.url
                                 ):
 
                                     print(
-                                        "✅ পোস্টের title পাওয়া গেছে।",
+                                        "✅ Published post title পাওয়া গেছে।",
                                         flush=True
                                     )
 
                                     print(
-                                        f"🔗 URL: {current_url}",
+                                        f"🔗 {page.url}",
                                         flush=True
                                     )
 
@@ -676,10 +855,10 @@ def verify_publish(page, original_title):
         except:
             pass
 
-    # ========================================================
+    # --------------------------------------------------------
     # IMPORTANT:
-    # Verification failed হলে TRUE হবে না
-    # ========================================================
+    # এখানে আর True করা হবে না
+    # --------------------------------------------------------
 
     print(
         "❌ Verification failed: পোস্ট নিশ্চিতভাবে পাওয়া যায়নি।",
@@ -703,7 +882,7 @@ def publish_process(page, post):
     try:
 
         # ----------------------------------------------------
-        # NEW POST PAGE
+        # New post page
         # ----------------------------------------------------
 
         page.goto(
@@ -715,7 +894,7 @@ def publish_process(page, post):
         page.wait_for_timeout(5000)
 
         # ----------------------------------------------------
-        # TITLE
+        # Title
         # ----------------------------------------------------
 
         title_input = page.locator(
@@ -732,7 +911,7 @@ def publish_process(page, post):
         )
 
         # ----------------------------------------------------
-        # CONTENT
+        # Editor
         # ----------------------------------------------------
 
         editor = page.locator(
@@ -756,7 +935,7 @@ def publish_process(page, post):
         )
 
         # ----------------------------------------------------
-        # IMAGE
+        # Image
         # ----------------------------------------------------
 
         image_path = download_image(
@@ -785,7 +964,7 @@ def publish_process(page, post):
             except Exception as e:
 
                 print(
-                    f"⚠️ থাম্বনেইল upload failed: {e}",
+                    f"⚠️ Thumbnail upload failed: {e}",
                     flush=True
                 )
 
@@ -798,9 +977,9 @@ def publish_process(page, post):
             flush=True
         )
 
-        publish_buttons = find_publish_buttons(page)
+        buttons = find_publish_buttons(page)
 
-        if not publish_buttons:
+        if not buttons:
 
             print(
                 "❌ প্রথম Publish button পাওয়া যায়নি।",
@@ -809,10 +988,9 @@ def publish_process(page, post):
 
             return False
 
-        # প্রথম visible Publish
-        first_publish = publish_buttons[0]
+        buttons[0].scroll_into_view_if_needed()
 
-        first_publish.click(
+        buttons[0].click(
             force=True,
             timeout=15000
         )
@@ -826,7 +1004,11 @@ def publish_process(page, post):
         # FINAL PUBLISH
         # ----------------------------------------------------
 
-        if not click_final_publish(page):
+        final_success = click_final_publish(
+            page
+        )
+
+        if not final_success:
 
             print(
                 "❌ Final Publish সম্পন্ন হয়নি।",
@@ -853,15 +1035,13 @@ def publish_process(page, post):
 
             return True
 
-        # ----------------------------------------------------
-        # VERY IMPORTANT
-        # ----------------------------------------------------
-        # Verification failed = False
-        # synced_posts.json update হবে না
-        # ----------------------------------------------------
+        print(
+            "❌ POST SYNC FAILED.",
+            flush=True
+        )
 
         print(
-            "❌ POST SYNC FAILED — synced database-এ যোগ করা হয়নি।",
+            "ℹ️ synced_posts.json-এ পোস্ট যোগ করা হয়নি।",
             flush=True
         )
 
@@ -947,7 +1127,7 @@ def main():
             return
 
         # ----------------------------------------------------
-        # PUBLISH POSTS
+        # PUBLISH
         # ----------------------------------------------------
 
         for post in to_sync:
@@ -980,15 +1160,14 @@ def main():
                 )
 
                 print(
-                    "ℹ️ এই পোস্ট synced database-এ যোগ করা হয়নি। "
-                    "পরের run-এ আবার চেষ্টা করবে।",
+                    "ℹ️ এই পোস্ট synced database-এ যোগ করা হয়নি।",
                     flush=True
                 )
 
         browser.close()
 
     # --------------------------------------------------------
-    # TEMP IMAGE CLEANUP
+    # Cleanup
     # --------------------------------------------------------
 
     if os.path.exists(TEMP_IMAGE):
