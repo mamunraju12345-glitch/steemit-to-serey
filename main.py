@@ -3,249 +3,878 @@ import json
 import re
 import time
 import requests
-from datetime import datetime, timedelta, timezone
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
 # ============================================================
-# SETTINGS
+# STEEM -> SEREY AUTO SYNC
 # ============================================================
 
 STEEM_USERNAME = os.environ["STEEM_USERNAME"]
 
-SEREY_LOGIN = os.environ.get(
-    "SEREY_LOGIN",
-    os.environ.get("SEREY_USERNAME", "")
-).replace("@", "").strip()
-
+SEREY_LOGIN = os.environ.get("SEREY_USERNAME", "").replace("@", "").strip()
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-# আপনার স্ক্রিনশট অনুযায়ী মেইন ডোমেইন
 SEREY = "https://serey.io"
-NEW_POST = f"{SEREY}/blog/post/new"
+NEW_POST_URL = f"{SEREY}/blog/post/new"
 
 SYNC_FILE = "synced_posts.json"
 TEMP_IMAGE = "temp_image.jpg"
 
+# প্রতি Run-এ কয়টি পোস্ট publish করবে
 POSTS_PER_RUN = 1
 
 STEEM_NODES = [
     "https://api.steemit.com",
-    "https://api.justyy.com",
-    "https://api.moecki.online",
-    "https://steem.619.io",
+    "https://api.justyy.com"
 ]
 
 
 # ============================================================
-# STEEM RPC
+# SYNC DATABASE
 # ============================================================
 
-def rpc(method, params):
+def load_synced():
+    if not os.path.exists(SYNC_FILE):
+        return set()
+
+    try:
+        with open(SYNC_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if isinstance(data, list):
+            return set(data)
+
+        return set()
+
+    except Exception as e:
+        print(f"⚠️ synced_posts.json পড়তে সমস্যা: {e}", flush=True)
+        return set()
+
+
+def save_synced(data):
+    try:
+        with open(SYNC_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                sorted(list(data)),
+                f,
+                ensure_ascii=False,
+                indent=2
+            )
+
+        print("✓ Sync database updated.", flush=True)
+
+    except Exception as e:
+        print(f"❌ Sync database save failed: {e}", flush=True)
+
+
+# ============================================================
+# CLEAN STEEM POST
+# ============================================================
+
+def clean_post(body):
+
+    image_url = None
+
+    # Markdown image খুঁজবে
+    markdown_image = re.search(
+        r'!\[[^\]]*\]\((https?://[^)\s]+)\)',
+        body,
+        re.I
+    )
+
+    if markdown_image:
+        image_url = markdown_image.group(1)
+
+    # সাধারণ image URL খুঁজবে
+    if not image_url:
+        image_match = re.search(
+            r'https?://[^\s"\']+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s"\']*)?',
+            body,
+            re.I
+        )
+
+        if image_match:
+            image_url = image_match.group(0)
+
+    # Markdown image remove
+    clean_body = re.sub(
+        r'!\[[^\]]*\]\([^)]+\)',
+        '',
+        body
+    )
+
+    # সরাসরি image URL remove
+    clean_body = re.sub(
+        r'https?://[^\s"\']+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s"\']*)?',
+        '',
+        clean_body,
+        flags=re.I
+    )
+
+    return clean_body.strip(), image_url
+
+
+# ============================================================
+# DOWNLOAD IMAGE
+# ============================================================
+
+def download_image(url):
+
+    if not url:
+        return None
+
+    try:
+
+        print("⌛ থাম্বনেইল ডাউনলোড করা হচ্ছে...", flush=True)
+
+        response = requests.get(
+            url,
+            timeout=20,
+            headers={
+                "User-Agent": "Mozilla/5.0"
+            }
+        )
+
+        if response.status_code == 200:
+
+            with open(TEMP_IMAGE, "wb") as f:
+                f.write(response.content)
+
+            print("✓ থাম্বনেইল ডাউনলোড হয়েছে।", flush=True)
+
+            return os.path.abspath(TEMP_IMAGE)
+
+    except Exception as e:
+
+        print(
+            f"⚠️ ইমেজ ডাউনলোড করা যায়নি: {e}",
+            flush=True
+        )
+
+    return None
+
+
+# ============================================================
+# GET STEEM POSTS
+# ============================================================
+
+def get_steem_posts():
+
+    print(
+        f"Checking posts for @{STEEM_USERNAME}...",
+        flush=True
+    )
+
     payload = {
         "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
+        "method": "condenser_api.get_discussions_by_blog",
+        "params": {
+            "tag": STEEM_USERNAME,
+            "limit": 20
+        },
         "id": 1
     }
 
     for node in STEEM_NODES:
+
         try:
-            r = requests.post(node, json=payload, timeout=20)
-            r.raise_for_status()
-            data = r.json()
-            if "error" in data: continue
-            return data["result"]
-        except: continue
-    raise Exception("All Steem RPC nodes failed")
+
+            print(
+                f"RPC: {node}",
+                flush=True
+            )
+
+            response = requests.post(
+                node,
+                json=payload,
+                timeout=30
+            )
+
+            response.raise_for_status()
+
+            result = response.json().get(
+                "result",
+                []
+            )
+
+            posts = []
+
+            for p in result:
+
+                if p.get("author") != STEEM_USERNAME:
+                    continue
+
+                body, image = clean_post(
+                    p.get("body", "")
+                )
+
+                posts.append({
+                    "id": f"{p['author']}/{p['permlink']}",
+                    "title": p.get("title", "").strip(),
+                    "body": body,
+                    "image": image
+                })
+
+            return posts
+
+        except Exception as e:
+
+            print(
+                f"⚠️ RPC failed: {e}",
+                flush=True
+            )
+
+    print(
+        "❌ সব Steem RPC node failed.",
+        flush=True
+    )
+
+    return []
 
 
 # ============================================================
-# SYNC FILE
+# FIND LOGIN STATE
 # ============================================================
 
-def load_synced():
-    if not os.path.exists(SYNC_FILE): return set()
+def is_logged_in(page):
+
     try:
-        with open(SYNC_FILE, encoding="utf-8") as f: return set(json.load(f))
-    except: return set()
 
+        page.goto(
+            SEREY,
+            wait_until="domcontentloaded",
+            timeout=90000
+        )
 
-def save_synced(data):
-    with open(SYNC_FILE, "w", encoding="utf-8") as f:
-        json.dump(sorted(data), f, ensure_ascii=False, indent=2)
+        page.wait_for_timeout(4000)
+
+        # Login button থাকলে logged out
+        login_buttons = page.locator(
+            'button:has-text("Log in"), '
+            'button:has-text("Log In"), '
+            'text="Log in", '
+            'text="Log In"'
+        )
+
+        if login_buttons.count() > 0:
+
+            for i in range(
+                min(login_buttons.count(), 5)
+            ):
+
+                try:
+
+                    if login_buttons.nth(i).is_visible(
+                        timeout=1000
+                    ):
+                        return False
+
+                except:
+                    pass
+
+        return True
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Login status check problem: {e}",
+            flush=True
+        )
+
+        return False
 
 
 # ============================================================
-# CLEAN BODY + IMAGE
+# SEREY LOGIN
 # ============================================================
 
-def clean_post(body, metadata):
-    image = None
+def login_serey(page):
+
+    print(
+        "Serey-তে লগইন চেক করা হচ্ছে...",
+        flush=True
+    )
+
     try:
-        meta = json.loads(metadata or "{}")
-        for x in meta.get("image", []):
-            if isinstance(x, str): image = x; break
-    except: pass
 
-    if not image:
-        m = re.search(r'!\[[^\]]*\]\((https?://[^)\s]+)', body, re.I)
-        if m: image = m.group(1)
+        if is_logged_in(page):
 
-    body = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', body)
-    body = re.sub(r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?', '', body, flags=re.I)
-    body = re.sub(r'\n{3,}', '\n\n', body)
-    return body.strip(), image
+            print(
+                "✓ অলরেডি লগইন আছে।",
+                flush=True
+            )
 
+            return True
 
-# ============================================================
-# GET STEEM POSTS (গত ১ বছর)
-# ============================================================
+    except:
+        pass
 
-def get_posts():
-    print(f"Getting posts from last 1 year for @{STEEM_USERNAME}...", flush=True)
-    posts, seen = [], set()
-    one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
-    start_author, start_permlink = None, None
+    print(
+        "⌛ Serey-তে লগইন করা হচ্ছে...",
+        flush=True
+    )
 
-    while len(posts) < 5000:
-        params = {"tag": STEEM_USERNAME, "limit": 100}
-        if start_author: params.update({"start_author": start_author, "start_permlink": start_permlink})
-        result = rpc("condenser_api.get_discussions_by_blog", params)
-        if not result: break
-        batch = result[1:] if start_author else result
-        if not batch: break
-
-        old_post_found = False
-        for p in batch:
-            created_dt = datetime.strptime(p['created'], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-            if created_dt < one_year_ago: old_post_found = True; continue
-            if p.get("author") != STEEM_USERNAME: continue
-            pid = f"{p['author']}/{p['permlink']}"
-            if pid not in seen:
-                seen.add(pid); body, image = clean_post(p.get("body", ""), p.get("json_metadata", "{}"))
-                posts.append({"id": pid, "title": p.get("title", "").strip(), "body": body, "image": image, "created": created_dt})
-        
-        if old_post_found: break
-        start_author, start_permlink = result[-1]['author'], result[-1]['permlink']
-        time.sleep(0.3)
-
-    posts.sort(key=lambda x: x['created']) # পুরনো আগে
-    print(f"Total eligible posts: {len(posts)}", flush=True)
-    return posts
-
-
-# ============================================================
-# IMAGE DOWNLOAD
-# ============================================================
-
-def download_image(url):
-    if not url: return None
     try:
-        r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code == 200:
-            with open(TEMP_IMAGE, "wb") as f: f.write(r.content)
-            return os.path.abspath(TEMP_IMAGE)
-    except: return None
+
+        page.goto(
+            SEREY,
+            wait_until="domcontentloaded",
+            timeout=90000
+        )
+
+        page.wait_for_timeout(3000)
+
+        login_button = page.locator(
+            'button:has-text("Log in"), '
+            'button:has-text("Log In"), '
+            'text="Log in", '
+            'text="Log In"'
+        ).first
+
+        login_button.click(
+            force=True,
+            timeout=10000
+        )
+
+        page.wait_for_timeout(2000)
+
+        # Username
+        username_input = page.locator(
+            'input[placeholder*="Username" i]'
+        ).first
+
+        username_input.fill(
+            SEREY_LOGIN
+        )
+
+        # Private Key / Password
+        password_input = page.locator(
+            'input[placeholder*="Private Key" i], '
+            'input[type="password"]'
+        ).first
+
+        password_input.fill(
+            SEREY_PASSWORD
+        )
+
+        # Login
+        page.locator(
+            'button:has-text("Log in"), '
+            'button:has-text("Log In")'
+        ).last.click(
+            force=True
+        )
+
+        page.wait_for_timeout(8000)
+
+        if is_logged_in(page):
+
+            print(
+                "✓ লগইন সম্পন্ন।",
+                flush=True
+            )
+
+            return True
+
+        print(
+            "❌ Serey login verify করা যায়নি।",
+            flush=True
+        )
+
+        return False
+
+    except Exception as e:
+
+        print(
+            f"❌ Login failed: {e}",
+            flush=True
+        )
+
+        return False
 
 
 # ============================================================
-# LOGIN
+# WAIT FOR PUBLISH MODAL
 # ============================================================
 
-def login(page):
-    print("Logging into Serey...", flush=True)
-    page.goto(SEREY, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(5000)
-    login_btn = page.locator('a:has-text("Log in"), button:has-text("Log in"), a:has-text("Log In"), button:has-text("Log In")').first
-    login_btn.wait_for(state="visible", timeout=30000)
-    login_btn.click(force=True)
-    page.wait_for_timeout(3000)
-    page.locator('input[placeholder*="Username"]').first.fill(SEREY_LOGIN)
-    page.locator('input[placeholder*="Private Key"]').first.fill(SEREY_PASSWORD)
-    page.locator('button:has-text("Log in"), button:has-text("Log In")').last.click(force=True)
-    page.wait_for_timeout(8000)
-    print("✓ LOGGED INTO SEREY SUCCESSFULLY!", flush=True)
+def find_publish_buttons(page):
+
+    selectors = [
+        'button:has-text("Publish")',
+        'button:has-text("publish")'
+    ]
+
+    buttons = []
+
+    for selector in selectors:
+
+        try:
+
+            locator = page.locator(selector)
+
+            count = locator.count()
+
+            for i in range(count):
+
+                try:
+
+                    button = locator.nth(i)
+
+                    if button.is_visible(
+                        timeout=500
+                    ):
+
+                        buttons.append(button)
+
+                except:
+                    pass
+
+        except:
+            pass
+
+    return buttons
 
 
 # ============================================================
-# VERIFY
+# CLICK FINAL PUBLISH
 # ============================================================
 
-def verify(page, title):
-    print("VERIFYING PUBLISHED POST...", flush=True)
-    for _ in range(6):
-        page.wait_for_timeout(6000)
-        if "/authors/" in page.url and "/blog/post/new" not in page.url:
-            print(f"✓ SUCCESS: {page.url}"); return True
-        if page.locator('text="Successfully posted your article"').is_visible():
-            print("✓ SUCCESS: Post message detected."); return True
+def click_final_publish(page):
+
+    print(
+        "⌛ AI ক্যাটাগরি প্রসেসিং হচ্ছে "
+        "(১ মিনিট পর্যন্ত অপেক্ষা)...",
+        flush=True
+    )
+
+    # সর্বোচ্চ 90 sec অপেক্ষা
+    for attempt in range(18):
+
+        page.wait_for_timeout(5000)
+
+        buttons = find_publish_buttons(page)
+
+        # একাধিক Publish button থাকলে
+        # শেষ visible button ব্যবহার করা হবে
+        if len(buttons) >= 2:
+
+            try:
+
+                final_button = buttons[-1]
+
+                if final_button.is_visible(
+                    timeout=1000
+                ):
+
+                    print(
+                        "✓ ফাইনাল Publish button পাওয়া গেছে।",
+                        flush=True
+                    )
+
+                    page.wait_for_timeout(2000)
+
+                    final_button.click(
+                        force=True,
+                        timeout=15000
+                    )
+
+                    print(
+                        "✓ ফাইনাল Publish বাটনে ক্লিক করা হয়েছে।",
+                        flush=True
+                    )
+
+                    return True
+
+            except Exception as e:
+
+                print(
+                    f"⚠️ Final Publish click retry: {e}",
+                    flush=True
+                )
+
+        # কখনও modal-এ শুধু একটি visible button থাকতে পারে
+        elif len(buttons) == 1:
+
+            try:
+
+                button = buttons[0]
+
+                # নতুন modal আছে কিনা বোঝার চেষ্টা
+                text = page.locator(
+                    "body"
+                ).inner_text(timeout=3000)
+
+                if (
+                    "AI" in text
+                    or "Category" in text
+                    or "category" in text
+                ):
+
+                    button.click(
+                        force=True,
+                        timeout=15000
+                    )
+
+                    print(
+                        "✓ ফাইনাল Publish বাটনে ক্লিক করা হয়েছে।",
+                        flush=True
+                    )
+
+                    return True
+
+            except:
+                pass
+
+        print(
+            f"⌛ Publish button অপেক্ষা... "
+            f"{(attempt + 1) * 5}s",
+            flush=True
+        )
+
+    print(
+        "❌ 90 সেকেন্ডেও Final Publish button পাওয়া যায়নি।",
+        flush=True
+    )
+
     return False
 
 
 # ============================================================
-# PUBLISH (সংশোধিত শক্তিশালী লজিক)
+# VERIFY SUCCESS
 # ============================================================
 
-def publish(page, post):
-    print("-" * 60)
-    print(f"Publishing: {post['title']}", flush=True)
-    page.goto(NEW_POST, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(5000)
+def verify_publish(page, original_title):
 
-    # ইনপুট ডাটা
-    page.locator('input[placeholder*="Enter title"]').fill(post["title"])
-    editor = page.locator('div[contenteditable="true"]').first
-    editor.click(); editor.fill(post["body"])
+    print(
+        "⌛ পোস্ট ভেরিফাই করা হচ্ছে...",
+        flush=True
+    )
 
-    # ইমেজ আপলোড
-    image = download_image(post.get("image"))
-    if image:
+    # প্রথমে current page URL check
+    for i in range(24):
+
+        page.wait_for_timeout(5000)
+
+        current_url = page.url
+
+        print(
+            f"🔎 Verification {i + 1}/24: {current_url}",
+            flush=True
+        )
+
+        # ----------------------------------------------------
+        # 1. URL থেকে success
+        # ----------------------------------------------------
+
+        if (
+            current_url != NEW_POST_URL
+            and "/blog/post/new" not in current_url
+        ):
+
+            # login / home page নয় কিনা
+            if (
+                "/post/" in current_url
+                or "/blog/" in current_url
+                or "/@" in current_url
+                or "/authors/" in current_url
+            ):
+
+                print(
+                    f"✅ পোস্ট সফলভাবে publish হয়েছে!",
+                    flush=True
+                )
+
+                print(
+                    f"🔗 URL: {current_url}",
+                    flush=True
+                )
+
+                return True
+
+        # ----------------------------------------------------
+        # 2. Success message
+        # ----------------------------------------------------
+
         try:
-            page.set_input_files('input[type="file"]', image)
-            print("⌛ Waiting for thumbnail upload..."); page.wait_for_timeout(10000)
-        except: pass
 
-    # ১. প্রথমবার পাবলিশ বাটন ক্লিক
-    page.locator('button:has-text("Publish")').last.click(force=True)
-    print("✓ FIRST PUBLISH CLICKED. Processing...", flush=True)
-    
-    # ২. পপ-আপ বা ম্যানুয়াল সিলেকশনের জন্য অপেক্ষা
-    page.wait_for_timeout(8000)
-    
-    success_final_click = False
-    for i in range(10): # মোট ৮০ সেকেন্ড অপেক্ষা করবে
-        # পপ-আপ বাটন চেক
-        final_btn = page.locator('div[role="dialog"] button:has-text("Publish"), .modal-content button:has-text("Publish")').last
-        if final_btn.is_visible():
-            print("✓ AI Pop-up detected. Clicking FINAL Publish...")
-            final_btn.click(force=True)
-            success_final_click = True
-            break
-        
-        # ম্যানুয়াল ক্যাটাগরি চেক
-        manual_cat = page.get_by_text("Select category").first
-        if manual_cat.is_visible():
-            print("Pop-up not found. Selecting manual category...")
-            manual_cat.click()
-            page.wait_for_timeout(1000)
-            page.locator('[role="option"]').first.click()
-            page.wait_for_timeout(2000)
-            page.locator('button:has-text("Publish")').last.click(force=True)
-            print("✓ Manual Final Publish clicked.")
-            success_final_click = True
-            break
-        
-        page.wait_for_timeout(8000)
-        print(f"Waiting... attempt {i+1}/10")
+            body_text = page.locator(
+                "body"
+            ).inner_text(timeout=3000)
 
-    if not success_final_click:
-        print("❌ Final steps failed. Saving debug screenshot.")
-        page.screenshot(path="error_debug.png")
+            success_words = [
+                "Successfully posted",
+                "Successfully published",
+                "Post published",
+                "Article published",
+                "Published successfully",
+                "Your post has been published",
+                "successfully posted"
+            ]
+
+            for word in success_words:
+
+                if word.lower() in body_text.lower():
+
+                    print(
+                        "✅ Success message পাওয়া গেছে।",
+                        flush=True
+                    )
+
+                    return True
+
+        except:
+            pass
+
+        # ----------------------------------------------------
+        # 3. Title page-এ দেখা গেলে success
+        # ----------------------------------------------------
+
+        try:
+
+            if original_title:
+
+                title_locator = page.get_by_text(
+                    original_title,
+                    exact=False
+                )
+
+                if title_locator.count() > 0:
+
+                    for j in range(
+                        min(title_locator.count(), 5)
+                    ):
+
+                        try:
+
+                            if title_locator.nth(j).is_visible(
+                                timeout=500
+                            ):
+
+                                current_url = page.url
+
+                                if (
+                                    "/new" not in current_url
+                                    and current_url != NEW_POST_URL
+                                ):
+
+                                    print(
+                                        "✅ পোস্টের title পাওয়া গেছে।",
+                                        flush=True
+                                    )
+
+                                    print(
+                                        f"🔗 URL: {current_url}",
+                                        flush=True
+                                    )
+
+                                    return True
+
+                        except:
+                            pass
+
+        except:
+            pass
+
+    # ========================================================
+    # IMPORTANT:
+    # Verification failed হলে TRUE হবে না
+    # ========================================================
+
+    print(
+        "❌ Verification failed: পোস্ট নিশ্চিতভাবে পাওয়া যায়নি।",
+        flush=True
+    )
+
+    return False
+
+
+# ============================================================
+# PUBLISH PROCESS
+# ============================================================
+
+def publish_process(page, post):
+
+    print(
+        f"\n🚀 সিঙ্কিং শুরু: {post['title']}",
+        flush=True
+    )
+
+    try:
+
+        # ----------------------------------------------------
+        # NEW POST PAGE
+        # ----------------------------------------------------
+
+        page.goto(
+            NEW_POST_URL,
+            wait_until="domcontentloaded",
+            timeout=90000
+        )
+
+        page.wait_for_timeout(5000)
+
+        # ----------------------------------------------------
+        # TITLE
+        # ----------------------------------------------------
+
+        title_input = page.locator(
+            'input[placeholder*="Enter title" i]'
+        ).first
+
+        title_input.wait_for(
+            state="visible",
+            timeout=30000
+        )
+
+        title_input.fill(
+            post["title"]
+        )
+
+        # ----------------------------------------------------
+        # CONTENT
+        # ----------------------------------------------------
+
+        editor = page.locator(
+            'div[contenteditable="true"]'
+        ).first
+
+        editor.wait_for(
+            state="visible",
+            timeout=30000
+        )
+
+        editor.click()
+
+        editor.fill(
+            post["body"]
+        )
+
+        print(
+            "✓ টাইটেল ও কন্টেন্ট যুক্ত হয়েছে।",
+            flush=True
+        )
+
+        # ----------------------------------------------------
+        # IMAGE
+        # ----------------------------------------------------
+
+        image_path = download_image(
+            post["image"]
+        )
+
+        if image_path:
+
+            try:
+
+                file_input = page.locator(
+                    'input[type="file"]'
+                ).first
+
+                file_input.set_input_files(
+                    image_path
+                )
+
+                page.wait_for_timeout(7000)
+
+                print(
+                    "✓ থাম্বনেইল আপলোড হয়েছে।",
+                    flush=True
+                )
+
+            except Exception as e:
+
+                print(
+                    f"⚠️ থাম্বনেইল upload failed: {e}",
+                    flush=True
+                )
+
+        # ----------------------------------------------------
+        # FIRST PUBLISH
+        # ----------------------------------------------------
+
+        print(
+            "✓ প্রথমবার Publish ক্লিক করা হচ্ছে...",
+            flush=True
+        )
+
+        publish_buttons = find_publish_buttons(page)
+
+        if not publish_buttons:
+
+            print(
+                "❌ প্রথম Publish button পাওয়া যায়নি।",
+                flush=True
+            )
+
+            return False
+
+        # প্রথম visible Publish
+        first_publish = publish_buttons[0]
+
+        first_publish.click(
+            force=True,
+            timeout=15000
+        )
+
+        print(
+            "✓ প্রথম Publish click হয়েছে।",
+            flush=True
+        )
+
+        # ----------------------------------------------------
+        # FINAL PUBLISH
+        # ----------------------------------------------------
+
+        if not click_final_publish(page):
+
+            print(
+                "❌ Final Publish সম্পন্ন হয়নি।",
+                flush=True
+            )
+
+            return False
+
+        # ----------------------------------------------------
+        # VERIFY
+        # ----------------------------------------------------
+
+        verified = verify_publish(
+            page,
+            post["title"]
+        )
+
+        if verified:
+
+            print(
+                "🎉 POST SYNC SUCCESSFUL!",
+                flush=True
+            )
+
+            return True
+
+        # ----------------------------------------------------
+        # VERY IMPORTANT
+        # ----------------------------------------------------
+        # Verification failed = False
+        # synced_posts.json update হবে না
+        # ----------------------------------------------------
+
+        print(
+            "❌ POST SYNC FAILED — synced database-এ যোগ করা হয়নি।",
+            flush=True
+        )
+
         return False
 
-    page.wait_for_timeout(15000)
-    return verify(page, post["title"])
+    except Exception as e:
+
+        print(
+            f"❌ Publishing error: {e}",
+            flush=True
+        )
+
+        return False
 
 
 # ============================================================
@@ -253,25 +882,141 @@ def publish(page, post):
 # ============================================================
 
 def main():
+
     synced = load_synced()
-    posts = get_posts()
-    new_posts = [p for p in posts if p["id"] not in synced][:POSTS_PER_RUN]
-    if not new_posts: print("Nothing to publish."); return
+
+    all_posts = get_steem_posts()
+
+    print(
+        f"Total posts: {len(all_posts)}",
+        flush=True
+    )
+
+    to_sync = [
+        p
+        for p in all_posts
+        if p["id"] not in synced
+    ][:POSTS_PER_RUN]
+
+    print(
+        f"Unsynced posts: {len(to_sync)}",
+        flush=True
+    )
+
+    if not to_sync:
+
+        print(
+            "নতুন কোনো unsynced post নেই।",
+            flush=True
+        )
+
+        return
+
+    print(
+        f"Publishing this run: {len(to_sync)}",
+        flush=True
+    )
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(viewport={"width": 1280, "height": 900}, user_agent="Mozilla/5.0")
+
+        browser = p.chromium.launch(
+            headless=True
+        )
+
+        context = browser.new_context(
+            viewport={
+                "width": 1280,
+                "height": 900
+            }
+        )
+
         page = context.new_page()
-        try:
-            login(page)
-            for post in new_posts:
-                if publish(page, post):
-                    synced.add(post["id"]); save_synced(synced)
-                    print(f"✓ SAVED: {post['id']}")
-                else: print("⚠️ NOT SAVED.")
-        finally:
-            if os.path.exists(TEMP_IMAGE): os.remove(TEMP_IMAGE)
+
+        # ----------------------------------------------------
+        # LOGIN
+        # ----------------------------------------------------
+
+        if not login_serey(page):
+
+            print(
+                "❌ Serey login failed. Sync বন্ধ করা হচ্ছে।",
+                flush=True
+            )
+
             browser.close()
+            return
+
+        # ----------------------------------------------------
+        # PUBLISH POSTS
+        # ----------------------------------------------------
+
+        for post in to_sync:
+
+            success = publish_process(
+                page,
+                post
+            )
+
+            if success:
+
+                synced.add(
+                    post["id"]
+                )
+
+                save_synced(
+                    synced
+                )
+
+                print(
+                    f"✓ Synced: {post['id']}",
+                    flush=True
+                )
+
+            else:
+
+                print(
+                    f"⚠️ Failed: {post['id']}",
+                    flush=True
+                )
+
+                print(
+                    "ℹ️ এই পোস্ট synced database-এ যোগ করা হয়নি। "
+                    "পরের run-এ আবার চেষ্টা করবে।",
+                    flush=True
+                )
+
+        browser.close()
+
+    # --------------------------------------------------------
+    # TEMP IMAGE CLEANUP
+    # --------------------------------------------------------
+
+    if os.path.exists(TEMP_IMAGE):
+
+        try:
+            os.remove(TEMP_IMAGE)
+        except:
+            pass
+
+    print(
+        "\n============================================================",
+        flush=True
+    )
+
+    print(
+        "SYNC RUN FINISHED",
+        flush=True
+    )
+
+    print(
+        "============================================================",
+        flush=True
+    )
+
+
+# ============================================================
+# START
+# ============================================================
 
 if __name__ == "__main__":
     main()
