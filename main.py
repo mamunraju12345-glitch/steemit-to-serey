@@ -101,9 +101,9 @@ def publish_process(page, post):
     print(f"\n🚀 সিঙ্কিং শুরু: {post['title']}")
     
     try:
-        # ১. নতুন পোস্ট পেজে যাওয়া
-        page.goto(NEW_POST_URL, wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(4000)
+        # ১. নতুন পোস্ট পেজে যাওয়া (Timeout ও Wait সংশোধন করা হয়েছে)
+        page.goto(NEW_POST_URL, wait_until="domcontentloaded", timeout=90000)
+        page.wait_for_timeout(5000)
 
         # ২. টাইটেল বসানো
         page.fill('input[placeholder*="Enter title"]', post['title'])
@@ -120,33 +120,33 @@ def publish_process(page, post):
         if img_path:
             try:
                 page.set_input_files('input[type="file"]', img_path)
-                page.wait_for_timeout(5000) 
+                page.wait_for_timeout(6000) 
                 print("✓ থাম্বনেইল আপলোড হয়েছে।")
             except:
                 print("⚠️ থাম্বনেইল আপলোড করা যায়নি।")
 
         # ৫. প্রথমবার 'Publish' বাটনে ক্লিক (নীল বাটন)
-        page.locator('button:has-text("Publish")').first.click()
+        page.locator('button:has-text("Publish")').first.click(force=True)
         print("✓ প্রথমবার Publish ক্লিক করা হয়েছে। AI প্রসেসিং হচ্ছে...")
 
         # ৬. AI ক্যাটাগরি পপ-আপ হ্যান্ডলিং
         try:
             # পপ-আপে "Your post belongs to category" আসা পর্যন্ত অপেক্ষা
-            page.wait_for_selector('text="Your post belongs to category"', timeout=25000)
+            page.wait_for_selector('text="Your post belongs to category"', timeout=30000)
             print("✓ AI ক্যাটাগরি পপ-আপ দেখা দিয়েছে।")
             
             # পপ-আপ এর ভেতরের নীল 'Publish' বাটনে ক্লিক করুন
             final_btn = page.locator('button:has-text("Publish")').last
-            final_btn.click()
+            final_btn.click(force=True)
             print("✓ দ্বিতীয়বার (Final) Publish ক্লিক করা হয়েছে।")
 
-            # ৭. সফলতার মেসেজ আসা পর্যন্ত অপেক্ষা (স্ক্রিনশট অনুযায়ী)
-            page.wait_for_selector('text="Successfully posted your article"', timeout=30000)
+            # ৭. সফলতার মেসেজ আসা পর্যন্ত অপেক্ষা
+            page.wait_for_selector('text="Successfully posted your article"', timeout=40000)
             print("✅ পোস্ট সফলভাবে পাবলিশ হয়েছে!")
             return True
 
         except Exception as e:
-            print(f"❌ পপ-আপ বা ফাইনাল পাবলিশ এরর: {str(e)}")
+            print(f"❌ পপ-আপ বা ফাইনাল পাবলিশ সমস্যা: {str(e)}")
             return False
 
     except Exception as e:
@@ -168,24 +168,36 @@ def main():
         return
 
     with sync_playwright() as p:
+        # ব্রাউজার লঞ্চ
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(viewport={'width': 1280, 'height': 900})
+        context = browser.new_context(
+            viewport={'width': 1280, 'height': 900},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        )
         page = context.new_page()
 
         # শুরুতে একবার লগইন
         print("Serey-তে লগইন করা হচ্ছে...")
-        page.goto(SEREY, wait_until="networkidle")
         try:
-            page.click('text="Log in"', timeout=10000)
-            page.fill('input[placeholder*="Username"]', SEREY_LOGIN)
-            page.fill('input[placeholder*="Private Key"]', SEREY_PASSWORD)
-            page.click('button:has-text("Log in")')
-            page.wait_for_timeout(5000)
-            print("✓ লগইন সফল।")
-        except:
-            print("❌ লগইন করতে সমস্যা হয়েছে।")
-            browser.close()
-            return
+            # wait_until="domcontentloaded" ব্যবহার করা হয়েছে টাইম-আউট এড়াতে
+            page.goto(SEREY, wait_until="domcontentloaded", timeout=90000)
+            page.wait_for_timeout(3000)
+            
+            # লগইন বাটন ক্লিক
+            login_btn = page.locator('text="Log in", text="Log In"').first
+            if login_btn.is_visible():
+                login_btn.click()
+                page.wait_for_timeout(2000)
+                page.fill('input[placeholder*="Username"]', SEREY_LOGIN)
+                page.fill('input[placeholder*="Private Key"]', SEREY_PASSWORD)
+                page.click('button:has-text("Log in"), button:has-text("Log In")')
+                page.wait_for_timeout(6000)
+                print("✓ লগইন সম্পন্ন হয়েছে।")
+            else:
+                print("⚠️ লগইন বাটন পাওয়া যায়নি, সম্ভবত আপনি অলরেডি লগইন আছেন।")
+        except Exception as e:
+            print(f"❌ লগইন প্রসেসে টাইম-আউট বা এরর: {str(e)}")
+            # লগইন না হলেও সিঙ্ক চেষ্টা করতে পারি যদি সেশন থাকে
 
         # পোস্ট সিঙ্ক শুরু
         for post in to_sync:
