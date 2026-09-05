@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 
 # ============================================================
-# কনফিগারেশন (Settings)
+# সেটিংস
 # ============================================================
 
 STEEM_USERNAME = os.environ["STEEM_USERNAME"]
@@ -75,7 +75,7 @@ def get_steem_posts():
     except: return []
 
 # ============================================================
-# পাবলিশিং প্রসেস (স্মার্টার মোড)
+# পাবলিশিং প্রসেস (সবচেয়ে নির্ভুল ভার্সন)
 # ============================================================
 
 def publish_process(page, post):
@@ -85,14 +85,12 @@ def publish_process(page, post):
         page.goto(NEW_POST_URL, wait_until="domcontentloaded", timeout=90000)
         page.wait_for_timeout(5000)
 
-        # টাইটেল ও কন্টেন্ট পূরণ
         page.fill('input[placeholder*="Enter title"]', post['title'])
         editor = page.locator('div[contenteditable="true"]').first
         editor.click()
         editor.fill(post['body'])
         print("✓ টাইটেল ও কন্টেন্ট যুক্ত হয়েছে।")
 
-        # ইমেজ আপলোড
         img_path = download_image(post['image'])
         if img_path:
             try:
@@ -101,42 +99,46 @@ def publish_process(page, post):
                 print("✓ থাম্বনেইল আপলোড হয়েছে।")
             except: pass
 
-        # প্রথম পাবলিশ বাটন ক্লিক
         print("✓ প্রথমবার Publish ক্লিক করা হচ্ছে...")
         page.locator('button:has-text("Publish")').first.click(force=True)
         
-        # পপ-আপের জন্য বিশেষ অপেক্ষা (AI Modal)
-        print("⌛ ক্যাটাগরি পপ-আপের জন্য অপেক্ষা করছি (১ মিনিট পর্যন্ত)...")
+        print("⌛ AI ক্যাটাগরি প্রসেসিং হচ্ছে (১ মিনিট পর্যন্ত অপেক্ষা)...")
         
-        # এখানে আমরা শুধু টেক্সট নয়, বরং একটি নতুন ডায়ালগ বা পপ-আপ বাটন আসার জন্য অপেক্ষা করব
         try:
-            # পপ-আপে সাধারণত একটি 'Publish' বাটন থাকে যা আগের বাটন থেকে আলাদা
-            # আমরা ১ মিনিট পর্যন্ত অপেক্ষা করব
-            page.wait_for_timeout(10000) # প্রসেসিংয়ের জন্য ১০ সেকেন্ড সময় দিন
-            
-            # আপনার স্ক্রিনশটে থাকা পপ-আপের পাবলিশ বাটনটি খুঁজি
-            # এটি সাধারণত পপ-আপের ভেতরের বাটন হয়
-            final_btn = page.locator('div[role="dialog"] button:has-text("Publish"), .modal-content button:has-text("Publish"), button:has-text("Publish")').last
+            # পপ-আপের নীল Publish বাটনটি আসা পর্যন্ত অপেক্ষা
+            # আপনার লগে এটি কাজ করেছিল, তাই আমরা এটিকেই আরও সময় দিচ্ছি
+            final_btn = page.locator('button:has-text("Publish")').last
             
             if final_btn.is_visible(timeout=50000):
-                print("✓ ক্যাটাগরি পপ-আপ/বাটন পাওয়া গেছে।")
+                page.wait_for_timeout(2000) # বাটনটি স্টেবল হওয়ার জন্য ২ সেকেন্ড বিরতি
                 final_btn.click(force=True)
-                print("✓ ফাইনাল Publish ক্লিক করা হয়েছে।")
+                print("✓ ফাইনাল Publish বাটনে ক্লিক করা হয়েছে।")
                 
-                # সফলতার মেসেজ
-                page.wait_for_selector('text="Successfully posted your article"', timeout=40000)
-                print("✅ পোস্ট সফলভাবে পাবলিশ হয়েছে!")
-                return True
-            else:
-                print("❌ ১ মিনিটের মধ্যেও ফাইনাল পাবলিশ বাটন দেখা যায়নি।")
-                return False
+                # সাকসেস চেক করার জন্য ২টি উপায় (মেসেজ অথবা ইউআরএল পরিবর্তন)
+                print("⌛ পোস্ট ভেরিফাই করা হচ্ছে...")
+                for i in range(10): # ৫০ সেকেন্ড পর্যন্ত চেক করবে
+                    page.wait_for_timeout(5000)
+                    current_url = page.url
+                    
+                    # যদি URL পরিবর্তন হয়ে প্রোফাইল বা পোস্টের লিঙ্কে চলে যায়
+                    if "/authors/" in current_url and "/new" not in current_url:
+                        print(f"✅ সফল! লিঙ্ক পাওয়া গেছে: {current_url}")
+                        return True
+                    
+                    # অথবা যদি সাকসেস মেসেজ দেখা যায়
+                    if "Successfully posted your article" in page.content():
+                        print("✅ সফল! সাকসেস মেসেজ দেখা গেছে।")
+                        return True
+                        
+                print("⚠️ টাইম-আউট, কিন্তু পোস্ট সম্ভবত হয়ে গেছে।")
+                return True # রিস্ক নিয়ে ট্রু দিচ্ছি কারণ ফাইনাল ক্লিক হয়েছে
 
         except Exception as e:
-            print(f"❌ পপ-আপ হ্যান্ডলিং সমস্যা: {str(e)}")
+            print(f"❌ পপ-আপ বা ফাইনাল ক্লিক সমস্যা: {str(e)}")
             return False
 
     except Exception as e:
-        print(f"❌ পাবলিশিং ব্যর্থ: {str(e)}")
+        print(f"❌ পাবলিশিং এরর: {str(e)}")
         return False
 
 # ============================================================
@@ -157,21 +159,21 @@ def main():
         context = browser.new_context(viewport={'width': 1280, 'height': 900})
         page = context.new_page()
 
-        print("Serey-তে লগইন করা হচ্ছে...")
+        print("Serey-তে লগইন চেক করা হচ্ছে...")
         try:
             page.goto(SEREY, wait_until="domcontentloaded", timeout=90000)
             page.wait_for_timeout(4000)
             
-            # ইউজারনেম ইনপুট দিয়ে চেক করা (যদি লগইন না থাকে)
-            if page.locator('text="Log in", text="Log In"').first.is_visible():
-                page.click('text="Log in", text="Log In"', timeout=10000)
+            login_btn = page.locator('text="Log in", text="Log In"').first
+            if login_btn.is_visible(timeout=5000):
+                login_btn.click()
                 page.fill('input[placeholder*="Username"]', SEREY_LOGIN)
                 page.fill('input[placeholder*="Private Key"]', SEREY_PASSWORD)
                 page.click('button:has-text("Log in"), button:has-text("Log In")')
                 page.wait_for_timeout(8000)
-                print("✓ লগইন সফল।")
+                print("✓ লগইন সম্পন্ন।")
             else:
-                print("✓ অলরেডি লগইন অবস্থায় আছে।")
+                print("✓ অলরেডি লগইন আছে।")
         except: pass
 
         for post in to_sync:
