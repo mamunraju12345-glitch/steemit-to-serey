@@ -152,7 +152,7 @@ def clean_post(body, metadata):
 
 
 # ============================================================
-# GET STEEM POSTS (সংশোধিত: গত ১ বছর)
+# GET STEEM POSTS (গত ১ বছর এবং নিচ থেকে উপরে)
 # ============================================================
 
 def get_posts():
@@ -163,8 +163,6 @@ def get_posts():
 
     posts = []
     seen = set()
-    
-    # বর্তমান থেকে ১ বছর আগের সময় নির্ধারণ করা হলো
     one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
 
     start_author = None
@@ -196,11 +194,8 @@ def get_posts():
 
         old_post_detected = False
         for p in batch:
-            
-            # তারিখ চেক করা হচ্ছে
             created_dt = datetime.strptime(p['created'], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
             
-            # ১ বছরের বেশি পুরনো পোস্ট হলে লুপ বন্ধ হবে
             if created_dt < one_year_ago:
                 old_post_detected = True
                 continue
@@ -208,52 +203,35 @@ def get_posts():
             if p.get("author") != STEEM_USERNAME:
                 continue
 
-            author = p.get("author", "")
-            permlink = p.get("permlink", "")
-
-            if not permlink:
-                continue
-
-            pid = f"{author}/{permlink}"
-
+            pid = f"{p['author']}/{p['permlink']}"
             if pid in seen:
                 continue
 
             seen.add(pid)
-
-            body, image = clean_post(
-                p.get("body", ""),
-                p.get("json_metadata", "{}")
-            )
+            body, image = clean_post(p.get("body", ""), p.get("json_metadata", "{}"))
 
             posts.append({
                 "id": pid,
                 "title": p.get("title", "").strip(),
                 "body": body,
                 "image": image,
-                "category": p.get("category", "")
+                "category": p.get("category", ""),
+                "created": created_dt
             })
 
         if old_post_detected:
             break
 
         last = result[-1]
-        new_author = last.get("author")
-        new_permlink = last.get("permlink")
-
-        if (new_author == start_author and new_permlink == start_permlink):
-            break
-
-        start_author = new_author
-        start_permlink = new_permlink
+        start_author, start_permlink = last.get("author"), last.get("permlink")
 
         if len(result) < 100:
             break
 
         time.sleep(0.3)
 
-    # পুরনো পোস্ট আগে করার জন্য রিভার্স রাখা হয়েছে (নিচ থেকে উপরে)
-    posts.reverse()
+    # পুরাতন পোস্ট আগে পাবলিশ করার জন্য সাজানো
+    posts.sort(key=lambda x: x['created'])
 
     print(
         f"Total posts from last 1 year: {len(posts)}",
@@ -386,7 +364,7 @@ def verify(page, title):
 
 
 # ============================================================
-# PUBLISH (সংশোধিত: ইমেজ আপলোড ফিক্স)
+# PUBLISH (সংশোধিত: শক্তিশালী পপ-আপ লজিক)
 # ============================================================
 
 def publish(page, post):
@@ -407,12 +385,11 @@ def publish(page, post):
     editor.fill(post["body"])
     print("✓ Body filled")
 
-    # THUMBNAIL (আপডেটেড ওয়েটিং টাইম)
+    # THUMBNAIL
     image = download_image(post.get("image"))
     if image:
         try:
             page.set_input_files('input[type="file"]', image)
-            # ইমেজটি সঠিকভাবে আপলোড হওয়ার জন্য ১০ সেকেন্ড বাফার টাইম
             print("⌛ Waiting for thumbnail upload...", flush=True)
             page.wait_for_timeout(10000) 
             print("✓ Thumbnail uploaded")
@@ -420,19 +397,39 @@ def publish(page, post):
             print(f"Thumbnail failed: {e}")
 
     # FIRST PUBLISH CLICK
+    page.wait_for_timeout(2000)
     page.get_by_text("Publish", exact=True).last.click(force=True)
-    print("✓ FIRST PUBLISH CLICKED. Waiting for AI Pop-up...")
+    print("✓ FIRST PUBLISH CLICKED. Processing...")
 
-    # AI ক্যাটাগরি পপ-আপ হ্যান্ডলিং
+    # AI পপ-আপ বা ম্যানুয়াল ক্যাটাগরি হ্যান্ডলিং
+    page.wait_for_timeout(10000) # প্রসেসিংয়ের জন্য ১০ সেকেন্ড দিন
+
     try:
+        # ১. পপ-আপ এর ভেতর নীল পাবলিশ বাটন খুঁজুন
         final_btn = page.locator('div[role="dialog"] button:has-text("Publish"), .modal-content button:has-text("Publish")').last
-        final_btn.wait_for(state="visible", timeout=60000)
-        final_btn.click(force=True)
-        print("✓ AI Pop-up detected. Clicking FINAL Publish...")
+        
+        if final_btn.is_visible():
+            print("✓ AI Pop-up detected. Clicking FINAL Publish...")
+            final_btn.click(force=True)
+        else:
+            # ২. যদি পপ-আপ না আসে, চেক করুন ম্যানুয়াল ক্যাটাগরি প্রয়োজন কি না
+            print("Pop-up not found. Checking manual category...")
+            if page.get_by_text("Select category").is_visible():
+                page.get_by_text("Select category").first.click()
+                page.wait_for_timeout(1000)
+                # প্রথম ক্যাটাগরি সিলেক্ট করুন
+                page.locator('[role="option"]').first.click()
+                print("✓ Manual category selected.")
+                page.wait_for_timeout(2000)
+            
+            # আবার ট্রাই করুন পাবলিশ বাটনে
+            page.locator('button:has-text("Publish")').last.click(force=True)
+            print("✓ Final Publish clicked manually.")
+
         page.wait_for_timeout(15000)
 
     except Exception as e:
-        print(f"❌ Final Publish failed or Pop-up didn't appear: {e}")
+        print(f"❌ Final Publish failed: {e}")
         return False
 
     return verify(page, post["title"])
