@@ -3,6 +3,7 @@ import json
 import re
 import time
 import requests
+from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 
 
@@ -11,444 +12,177 @@ from playwright.sync_api import sync_playwright
 # ============================================================
 
 STEEM_USERNAME = os.environ["STEEM_USERNAME"]
-
-SEREY_LOGIN = os.environ.get(
-    "SEREY_LOGIN",
-    os.environ.get("SEREY_USERNAME", "")
-).replace("@", "").strip()
-
+SEREY_LOGIN = os.environ.get("SEREY_USERNAME", "").replace("@", "").strip()
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-# আপনার স্ক্রিনশট অনুযায়ী ডোমেইন পরিবর্তন করা হয়েছে
 SEREY = "https://serey.io"
 NEW_POST = f"{SEREY}/blog/post/new"
 
 SYNC_FILE = "synced_posts.json"
 TEMP_IMAGE = "temp_image.jpg"
-
 POSTS_PER_RUN = 1
 
-STEEM_NODES = [
-    "https://api.steemit.com",
-    "https://api.justyy.com",
-    "https://api.moecki.online",
-    "https://steem.619.io",
-]
-
+STEEM_NODES = ["https://api.steemit.com", "https://api.justyy.com"]
 
 # ============================================================
-# STEEM RPC
-# ============================================================
-
-def rpc(method, params):
-    payload = {
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1
-    }
-
-    for node in STEEM_NODES:
-        try:
-            print(f"RPC: {node}", flush=True)
-
-            r = requests.post(
-                node,
-                json=payload,
-                timeout=20
-            )
-
-            r.raise_for_status()
-            data = r.json()
-
-            if "error" in data:
-                raise Exception(data["error"])
-
-            return data["result"]
-
-        except Exception as e:
-            print(f"RPC failed: {e}", flush=True)
-
-    raise Exception("All Steem RPC nodes failed")
-
-
-# ============================================================
-# SYNC FILE
+# ডাটাবেজ ফাংশন
 # ============================================================
 
 def load_synced():
-    if not os.path.exists(SYNC_FILE):
-        return set()
-
+    if not os.path.exists(SYNC_FILE): return set()
     try:
         with open(SYNC_FILE, encoding="utf-8") as f:
             return set(json.load(f))
-    except Exception:
-        return set()
-
+    except: return set()
 
 def save_synced(data):
-    with open(
-        SYNC_FILE,
-        "w",
-        encoding="utf-8"
-    ) as f:
-        json.dump(
-            sorted(data),
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
-
+    with open(SYNC_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(data), f, ensure_ascii=False, indent=2)
 
 # ============================================================
-# CLEAN BODY + IMAGE
+# কন্টেন্ট ও ইমেজ হ্যান্ডলিং
 # ============================================================
 
 def clean_post(body, metadata):
     image = None
-
     try:
         meta = json.loads(metadata or "{}")
-
         for x in meta.get("image", []):
             if isinstance(x, str):
                 image = x
                 break
-
-    except Exception:
-        pass
-
+    except: pass
     if not image:
-        m = re.search(
-            r'!\[[^\]]*\]\((https?://[^)\s]+)',
-            body,
-            re.I
-        )
-        if m:
-            image = m.group(1)
+        m = re.search(r'!\[[^\]]*\]\((https?://[^)\s]+)', body, re.I)
+        if m: image = m.group(1)
 
-    body = re.sub(
-        r'!\[[^\]]*\]\([^)]+\)',
-        '',
-        body
-    )
-
-    body = re.sub(
-        r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?',
-        '',
-        body,
-        flags=re.I
-    )
-
-    body = re.sub(
-        r'\n{3,}',
-        '\n\n',
-        body
-    )
-
+    body = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', body)
+    body = re.sub(r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?', '', body, flags=re.I)
+    body = re.sub(r'\n{3,}', '\n\n', body)
     return body.strip(), image
 
+def download_image(url):
+    if not url: return None
+    try:
+        print(f"Downloading image: {url}", flush=True)
+        r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200:
+            with open(TEMP_IMAGE, "wb") as f:
+                f.write(r.content)
+            return os.path.abspath(TEMP_IMAGE)
+    except Exception as e:
+        print(f"Image download failed: {e}")
+    return None
 
 # ============================================================
-# GET STEEM POSTS
+# ১ বছরের পোস্ট সংগ্রহ (পুরাতন থেকে নতুন)
 # ============================================================
 
 def get_posts():
-    print(
-        f"Getting posts from @{STEEM_USERNAME}...",
-        flush=True
-    )
-
+    print(f"Getting posts from last 1 year for @{STEEM_USERNAME}...", flush=True)
     posts = []
     seen = set()
-
+    one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
+    
     start_author = None
     start_permlink = None
-
-    while len(posts) < 5000:
-
-        params = {
-            "tag": STEEM_USERNAME,
-            "limit": 100
+    
+    while True:
+        payload = {
+            "jsonrpc": "2.0", "method": "condenser_api.get_discussions_by_blog",
+            "params": {"tag": STEEM_USERNAME, "limit": 50, "start_author": start_author, "start_permlink": start_permlink} if start_author else {"tag": STEEM_USERNAME, "limit": 50},
+            "id": 1
         }
-
-        if start_author:
-            params["start_author"] = start_author
-            params["start_permlink"] = start_permlink
-
-        result = rpc(
-            "condenser_api.get_discussions_by_blog",
-            params
-        )
-
-        if not result:
-            break
-
+        r = requests.post("https://api.steemit.com", json=payload, timeout=20)
+        result = r.json().get("result", [])
+        if not result: break
+        
         batch = result[1:] if start_author else result
+        if not batch: break
 
-        if not batch:
-            break
-
+        old_post_detected = False
         for p in batch:
-
-            if p.get("author") != STEEM_USERNAME:
+            created_dt = datetime.strptime(p['created'], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            
+            # ১ বছরের বেশি পুরনো হলে লুপ থামিয়ে দাও
+            if created_dt < one_year_ago:
+                old_post_detected = True
                 continue
+            
+            pid = f"{p['author']}/{p['permlink']}"
+            if pid not in seen:
+                seen.add(pid)
+                body, img = clean_post(p.get("body", ""), p.get("json_metadata", "{}"))
+                posts.append({"id": pid, "title": p.get("title", ""), "body": body, "image": img, "created": created_dt})
 
-            author = p.get("author", "")
-            permlink = p.get("permlink", "")
-
-            if not permlink:
-                continue
-
-            pid = f"{author}/{permlink}"
-
-            if pid in seen:
-                continue
-
-            seen.add(pid)
-
-            body, image = clean_post(
-                p.get("body", ""),
-                p.get("json_metadata", "{}")
-            )
-
-            posts.append({
-                "id": pid,
-                "title": p.get("title", "").strip(),
-                "body": body,
-                "image": image,
-                "category": p.get("category", "")
-            })
-
-        last = result[-1]
-
-        new_author = last.get("author")
-        new_permlink = last.get("permlink")
-
-        if (
-            new_author == start_author
-            and new_permlink == start_permlink
-        ):
-            break
-
-        start_author = new_author
-        start_permlink = new_permlink
-
-        if len(result) < 100:
-            break
-
+        if old_post_detected or len(result) < 50: break
+        start_author, start_permlink = result[-1]['author'], result[-1]['permlink']
         time.sleep(0.3)
 
-    # পুরনো পোস্ট আগে করার জন্য রিভার্স রাখা হয়েছে
-    posts.reverse()
-
-    print(
-        f"Total posts: {len(posts)}",
-        flush=True
-    )
-
+    # পুরাতন পোস্ট আগে পাবলিশ করার জন্য সাজানো (Oldest First)
+    posts.sort(key=lambda x: x['created'])
+    print(f"Total eligible posts (last 1 year): {len(posts)}", flush=True)
     return posts
 
-
 # ============================================================
-# IMAGE DOWNLOAD
-# ============================================================
-
-def download_image(url):
-
-    if not url:
-        return None
-
-    try:
-        print(
-            f"Downloading image: {url}",
-            flush=True
-        )
-
-        r = requests.get(
-            url,
-            timeout=20,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            }
-        )
-
-        r.raise_for_status()
-
-        if "image" not in r.headers.get(
-            "content-type", ""
-        ).lower():
-            return None
-
-        with open(TEMP_IMAGE, "wb") as f:
-            f.write(r.content)
-
-        return TEMP_IMAGE
-
-    except Exception as e:
-        print(
-            f"Image download failed: {e}",
-            flush=True
-        )
-        return None
-
-
-# ============================================================
-# LOGIN
-# ============================================================
-
-def login(page):
-
-    print("Logging into Serey...", flush=True)
-
-    page.goto(
-        SEREY,
-        wait_until="domcontentloaded",
-        timeout=60000
-    )
-
-    page.wait_for_timeout(3000)
-
-    page.locator(
-        'a:has-text("Log in"),'
-        'button:has-text("Log in"),'
-        'a:has-text("Log In"),'
-        'button:has-text("Log In")'
-    ).first.click(force=True)
-
-    page.wait_for_timeout(3000)
-
-    page.locator(
-        'input[placeholder*="Username"]'
-    ).first.fill(SEREY_LOGIN)
-
-    page.locator(
-        'input[placeholder*="Private Key"]'
-    ).first.fill(SEREY_PASSWORD)
-
-    page.locator(
-        'button:has-text("Log in"),'
-        'button:has-text("Log In")'
-    ).last.click(force=True)
-
-    page.wait_for_timeout(6000)
-
-    print(
-        "✓ LOGGED INTO SEREY SUCCESSFULLY!",
-        flush=True
-    )
-
-
-# ============================================================
-# VERIFY
-# ============================================================
-
-def verify(page, title):
-
-    print(
-        "VERIFYING PUBLISHED POST...",
-        flush=True
-    )
-
-    for _ in range(5):
-
-        page.wait_for_timeout(6000)
-
-        url = page.url
-        print(f"Current URL: {url}", flush=True)
-
-        if "/authors/" in url and "/blog/post/new" not in url:
-            print("✓ SUCCESS: POST PUBLISHED AND REDIRECTED!", flush=True)
-            return True
-
-        try:
-            # সাকসেস মেসেজ চেক
-            if page.locator('text="Successfully posted your article"').is_visible():
-                print("✓ SUCCESS MESSAGE DETECTED!", flush=True)
-                return True
-        except:
-            pass
-
-    print("❌ Publication could not be verified.", flush=True)
-    return False
-
-
-# ============================================================
-# PUBLISH (পরিবর্তিত অংশ)
+# পাবলিশিং প্রসেস (থাম্বনেইল ফিক্স সহ)
 # ============================================================
 
 def publish(page, post):
-
     print("-" * 60)
     print(f"Publishing: {post['title']}", flush=True)
-
     page.goto(NEW_POST, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(4000)
+    page.wait_for_timeout(5000)
 
-    # TITLE
+    # টাইটেল ও বর্ণনা
     page.locator('input[placeholder*="Enter title"]').fill(post["title"])
-    print("✓ Title filled")
-
-    # BODY
     editor = page.locator('div[contenteditable="true"]').first
     editor.click()
     editor.fill(post["body"])
-    print("✓ Body filled")
 
-    # THUMBNAIL
+    # ইমেজ আপলোড (উন্নত করা হয়েছে)
     image = download_image(post.get("image"))
     if image:
         try:
             page.set_input_files('input[type="file"]', image)
-            page.wait_for_timeout(5000)
+            print("⌛ Waiting for image upload to complete...")
+            page.wait_for_timeout(10000) # আপলোডের জন্য পর্যাপ্ত সময়
             print("✓ Thumbnail uploaded")
         except Exception as e:
-            print(f"Thumbnail failed: {e}")
+            print(f"Thumbnail upload failed: {e}")
 
-    # FIRST PUBLISH CLICK
+    # প্রথমবার পাবলিশ বাটন
     page.get_by_text("Publish", exact=True).last.click(force=True)
     print("✓ FIRST PUBLISH CLICKED. Waiting for AI Pop-up...")
 
-    # AI ক্যাটাগরি পপ-আপ হ্যান্ডলিং (সবচেয়ে গুরুত্বপূর্ণ ধাপ)
+    # AI পপ-আপ হ্যান্ডলিং
     try:
-        # পপ-আপ এর ভেতর যে নীল পাবলিশ বাটনটি থাকে সেটির জন্য অপেক্ষা
-        # আপনার স্ক্রিনশট অনুযায়ী এটি ডায়ালগ বক্সে থাকে
         final_btn = page.locator('div[role="dialog"] button:has-text("Publish"), .modal-content button:has-text("Publish")').last
-        
-        # পপ-আপ আসার জন্য ১ মিনিট পর্যন্ত অপেক্ষা করবে
         final_btn.wait_for(state="visible", timeout=60000)
-        
-        print("✓ AI Pop-up detected. Clicking FINAL Publish...")
         final_btn.click(force=True)
-        
-        # পাবলিশ হওয়ার জন্য সময় দিন
+        print("✓ FINAL PUBLISH CLICKED.")
         page.wait_for_timeout(15000)
-
     except Exception as e:
-        print(f"❌ Final Publish failed or Pop-up didn't appear: {e}")
+        print(f"❌ Pop-up handling failed: {e}")
         return False
 
-    return verify(page, post["title"])
-
+    # ভেরিফিকেশন
+    for _ in range(5):
+        page.wait_for_timeout(6000)
+        if "/authors/" in page.url and "/blog/post/new" not in page.url:
+            print(f"✓ SUCCESS: {page.url}")
+            return True
+    return False
 
 # ============================================================
-# MAIN
+# মেইন ফাংশন
 # ============================================================
 
 def main():
-
-    print("=" * 60)
-    print("STEEM -> SEREY AUTO SYNC")
-    print("=" * 60)
-
     synced = load_synced()
-    print(f"Previously synced: {len(synced)}", flush=True)
-
     posts = get_posts()
     new_posts = [p for p in posts if p["id"] not in synced]
-    print(f"Unsynced posts: {len(new_posts)}", flush=True)
-
+    
     posts_to_run = new_posts[:POSTS_PER_RUN]
     if not posts_to_run:
         print("Nothing to publish.")
@@ -456,36 +190,26 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        )
+        context = browser.new_context(viewport={"width": 1280, "height": 900}, user_agent="Mozilla/5.0")
         page = context.new_page()
 
         try:
-            login(page)
+            # লগইন
+            page.goto(SEREY, wait_until="domcontentloaded", timeout=60000)
+            page.click('text="Log in", text="Log In"', timeout=15000)
+            page.fill('input[placeholder*="Username"]', SEREY_LOGIN)
+            page.fill('input[placeholder*="Private Key"]', SEREY_PASSWORD)
+            page.click('button:has-text("Log in"), button:has-text("Log In")')
+            page.wait_for_timeout(8000)
 
             for post in posts_to_run:
-                try:
-                    if publish(page, post):
-                        synced.add(post["id"])
-                        save_synced(synced)
-                        print(f"✓ SAVED AS SYNCED: {post['id']}", flush=True)
-                    else:
-                        print("⚠️ NOT SAVED AS SYNCED.", flush=True)
-                except Exception as e:
-                    print(f"❌ Publish error: {e}", flush=True)
-
+                if publish(page, post):
+                    synced.add(post["id"])
+                    save_synced(synced)
+                    print(f"✓ SAVED: {post['id']}")
         finally:
-            if os.path.exists(TEMP_IMAGE):
-                try: os.remove(TEMP_IMAGE)
-                except: pass
+            if os.path.exists(TEMP_IMAGE): os.remove(TEMP_IMAGE)
             browser.close()
-
-    print("=" * 60)
-    print("SYNC COMPLETED")
-    print("=" * 60)
-
 
 if __name__ == "__main__":
     main()
