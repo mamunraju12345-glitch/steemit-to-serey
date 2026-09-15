@@ -298,8 +298,9 @@ def login(page):
         timeout=60000
     )
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(4000)
 
+    # Login trigger
     page.locator(
         'a:has-text("Log in"),'
         'button:has-text("Log in"),'
@@ -309,20 +310,12 @@ def login(page):
 
     page.wait_for_timeout(3000)
 
-    page.locator(
-        'input[placeholder*="Username"]'
-    ).first.fill(SEREY_LOGIN)
+    page.locator('input[placeholder*="Username"]').first.fill(SEREY_LOGIN)
+    page.locator('input[placeholder*="Private Key"]').first.fill(SEREY_PASSWORD)
 
-    page.locator(
-        'input[placeholder*="Private Key"]'
-    ).first.fill(SEREY_PASSWORD)
+    page.locator('button:has-text("Log in"), button:has-text("Log In")').last.click(force=True)
 
-    page.locator(
-        'button:has-text("Log in"),'
-        'button:has-text("Log In")'
-    ).last.click(force=True)
-
-    page.wait_for_timeout(6000)
+    page.wait_for_timeout(7000)
 
     print(
         "✓ LOGGED INTO SEREY SUCCESSFULLY!",
@@ -340,9 +333,9 @@ def verify(page, title):
         flush=True
     )
 
-    for _ in range(6):
+    for _ in range(8):
 
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(4000)
 
         url = page.url
         print(f"Current URL: {url}", flush=True)
@@ -362,7 +355,7 @@ def verify(page, title):
     return False
 
 # ============================================================
-# PUBLISH
+# PUBLISH (FIXED)
 # ============================================================
 
 def publish(page, post):
@@ -370,71 +363,101 @@ def publish(page, post):
     print("-" * 60)
     print(f"Publishing: {post['title']}", flush=True)
 
-    page.goto(NEW_POST, wait_until="networkidle", timeout=60000)
-    page.wait_for_timeout(4000)
+    page.goto(NEW_POST, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(5000)
 
     # 1. TITLE
-    page.locator('input[placeholder*="Enter title"]').fill(post["title"])
+    title_box = page.locator('input[placeholder*="Enter title"], input[placeholder*="Title"]').first
+    title_box.click()
+    title_box.fill(post["title"])
     print("✓ Title filled")
+    page.wait_for_timeout(1000)
 
     # 2. BODY
     editor = page.locator('div[contenteditable="true"]').first
     editor.click()
     editor.fill(post["body"])
     print("✓ Body filled")
+    page.wait_for_timeout(2000)
 
     # 3. THUMBNAIL
     image = download_image(post.get("image"))
     if image:
         try:
-            page.set_input_files('input[type="file"]', image)
-            page.wait_for_timeout(4000)
-            print("✓ Thumbnail uploaded")
+            file_input = page.locator('input[type="file"]').first
+            file_input.set_input_files(image)
+            print("✓ Thumbnail set, waiting for upload...")
+            page.wait_for_timeout(7000)
         except Exception as e:
-            print(f"Thumbnail failed: {e}")
+            print(f"Thumbnail upload failed: {e}")
 
-    page.wait_for_timeout(2000)
+    # 4. FIRST PUBLISH BUTTON CLICK
+    print("Attempting to click first Publish button...")
+    clicked = False
+    
+    # একাধিক সম্ভাব্য বাটনে ক্লিক চেষ্টা করা
+    publish_btn_selectors = [
+        'button:has-text("Publish")',
+        'div:has-text("Publish")[role="button"]',
+        'span:has-text("Publish")'
+    ]
+    
+    for sel in publish_btn_selectors:
+        try:
+            btn = page.locator(sel).first
+            if btn.is_visible():
+                btn.scroll_into_view_if_needed()
+                btn.click()
+                clicked = True
+                print(f"✓ Clicked publish with selector: {sel}")
+                break
+        except:
+            pass
 
-    # 4. FIRST PUBLISH CLICK
-    try:
-        first_btn = page.locator('button:has-text("Publish")').first
-        first_btn.scroll_into_view_if_needed()
-        first_btn.click(force=True)
-        print("✓ FIRST PUBLISH CLICKED. Checking for Modal/Pop-up...")
-    except Exception as e:
-        print(f"Failed to click initial publish: {e}")
-        return False
+    if not clicked:
+        # বিকল্প উপায়ে JavaScript দিয়ে ক্লিক
+        page.evaluate('''() => {
+            const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+            const pub = buttons.find(b => b.innerText && b.innerText.trim() === 'Publish');
+            if (pub) pub.click();
+        }''')
+        print("✓ Executed JS Click on Publish")
 
-    page.wait_for_timeout(3000)
+    # পপ-আপ আসার জন্য অপেক্ষা
+    page.wait_for_timeout(5000)
 
-    # 5. SECOND / FINAL PUBLISH POP-UP HANDLING
-    modal_selectors = [
+    # 5. MODAL / AI POP-UP HANDLING
+    print("Checking for Final Publish Modal/Pop-up...")
+    modal_publish_found = False
+
+    modal_btn_selectors = [
         'div[role="dialog"] button:has-text("Publish")',
         '.modal-content button:has-text("Publish")',
         '.modal button:has-text("Publish")',
         'div.fixed button:has-text("Publish")',
+        'div[class*="modal"] button:has-text("Publish")',
+        'div[class*="dialog"] button:has-text("Publish")',
         'button:has-text("Confirm")',
         'button:has-text("Submit")'
     ]
-    
-    found_modal = False
-    for selector in modal_selectors:
+
+    for sel in modal_btn_selectors:
         try:
-            btn = page.locator(selector).last
-            if btn.is_visible(timeout=5000):
-                print(f"✓ Final Button found with selector: {selector}")
-                page.wait_for_timeout(1000)
-                btn.click(force=True)
-                print("✓ Final Button Clicked!")
-                found_modal = True
+            m_btn = page.locator(sel).last
+            if m_btn.is_visible(timeout=4000):
+                print(f"✓ Found Final Modal Button: {sel}")
+                page.wait_for_timeout(2000)
+                m_btn.click(force=True)
+                print("✓ FINAL PUBLISH CLICKED SUCCESSFULLY!")
+                modal_publish_found = True
                 break
         except:
             continue
 
-    if not found_modal:
-        print("⚠️ Pop-up button not found directly, checking if page already submitted...")
-        page.screenshot(path="debug_error.png")
+    if not modal_publish_found:
+        print("⚠️ No pop-up detected, checking if post was submitted directly...")
 
+    # পেজ রিডাইরেক্ট হতে সময় দেওয়া
     page.wait_for_timeout(10000)
 
     return verify(page, post["title"])
