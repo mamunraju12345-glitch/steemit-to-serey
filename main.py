@@ -5,7 +5,6 @@ import time
 import requests
 from playwright.sync_api import sync_playwright
 
-
 # ============================================================
 # SETTINGS
 # ============================================================
@@ -19,7 +18,6 @@ SEREY_LOGIN = os.environ.get(
 
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-# আপনার স্ক্রিনশট অনুযায়ী ডোমেইন পরিবর্তন করা হয়েছে
 SEREY = "https://serey.io"
 NEW_POST = f"{SEREY}/blog/post/new"
 
@@ -34,7 +32,6 @@ STEEM_NODES = [
     "https://api.moecki.online",
     "https://steem.619.io",
 ]
-
 
 # ============================================================
 # STEEM RPC
@@ -71,7 +68,6 @@ def rpc(method, params):
 
     raise Exception("All Steem RPC nodes failed")
 
-
 # ============================================================
 # SYNC FILE
 # ============================================================
@@ -86,7 +82,6 @@ def load_synced():
     except Exception:
         return set()
 
-
 def save_synced(data):
     with open(
         SYNC_FILE,
@@ -99,7 +94,6 @@ def save_synced(data):
             ensure_ascii=False,
             indent=2
         )
-
 
 # ============================================================
 # CLEAN BODY + IMAGE
@@ -148,7 +142,6 @@ def clean_post(body, metadata):
     )
 
     return body.strip(), image
-
 
 # ============================================================
 # GET STEEM POSTS
@@ -240,7 +233,6 @@ def get_posts():
 
         time.sleep(0.3)
 
-    # পুরনো পোস্ট আগে করার জন্য রিভার্স রাখা হয়েছে
     posts.reverse()
 
     print(
@@ -249,7 +241,6 @@ def get_posts():
     )
 
     return posts
-
 
 # ============================================================
 # IMAGE DOWNLOAD
@@ -292,7 +283,6 @@ def download_image(url):
             flush=True
         )
         return None
-
 
 # ============================================================
 # LOGIN
@@ -339,7 +329,6 @@ def login(page):
         flush=True
     )
 
-
 # ============================================================
 # VERIFY
 # ============================================================
@@ -351,9 +340,9 @@ def verify(page, title):
         flush=True
     )
 
-    for _ in range(5):
+    for _ in range(6):
 
-        page.wait_for_timeout(6000)
+        page.wait_for_timeout(5000)
 
         url = page.url
         print(f"Current URL: {url}", flush=True)
@@ -363,7 +352,6 @@ def verify(page, title):
             return True
 
         try:
-            # সাকসেস মেসেজ চেক
             if page.locator('text="Successfully posted your article"').is_visible():
                 print("✓ SUCCESS MESSAGE DETECTED!", flush=True)
                 return True
@@ -373,9 +361,8 @@ def verify(page, title):
     print("❌ Publication could not be verified.", flush=True)
     return False
 
-
 # ============================================================
-# PUBLISH (পরিবর্তিত অংশ)
+# PUBLISH
 # ============================================================
 
 def publish(page, post):
@@ -383,54 +370,74 @@ def publish(page, post):
     print("-" * 60)
     print(f"Publishing: {post['title']}", flush=True)
 
-    page.goto(NEW_POST, wait_until="domcontentloaded", timeout=60000)
+    page.goto(NEW_POST, wait_until="networkidle", timeout=60000)
     page.wait_for_timeout(4000)
 
-    # TITLE
+    # 1. TITLE
     page.locator('input[placeholder*="Enter title"]').fill(post["title"])
     print("✓ Title filled")
 
-    # BODY
+    # 2. BODY
     editor = page.locator('div[contenteditable="true"]').first
     editor.click()
     editor.fill(post["body"])
     print("✓ Body filled")
 
-    # THUMBNAIL
+    # 3. THUMBNAIL
     image = download_image(post.get("image"))
     if image:
         try:
             page.set_input_files('input[type="file"]', image)
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(4000)
             print("✓ Thumbnail uploaded")
         except Exception as e:
             print(f"Thumbnail failed: {e}")
 
-    # FIRST PUBLISH CLICK
-    page.get_by_text("Publish", exact=True).last.click(force=True)
-    print("✓ FIRST PUBLISH CLICKED. Waiting for AI Pop-up...")
+    page.wait_for_timeout(2000)
 
-    # AI ক্যাটাগরি পপ-আপ হ্যান্ডলিং (সবচেয়ে গুরুত্বপূর্ণ ধাপ)
+    # 4. FIRST PUBLISH CLICK
     try:
-        # পপ-আপ এর ভেতর যে নীল পাবলিশ বাটনটি থাকে সেটির জন্য অপেক্ষা
-        # আপনার স্ক্রিনশট অনুযায়ী এটি ডায়ালগ বক্সে থাকে
-        final_btn = page.locator('div[role="dialog"] button:has-text("Publish"), .modal-content button:has-text("Publish")').last
-
-        # পপ-আপ আসার জন্য ১ মিনিট পর্যন্ত অপেক্ষা করবে
-        final_btn.wait_for(state="visible", timeout=60000)
-
-        print("✓ AI Pop-up detected. Clicking FINAL Publish...")
-        final_btn.click(force=True)
-
-        # পাবলিশ হওয়ার জন্য সময় দিন
-        page.wait_for_timeout(15000)
-
+        first_btn = page.locator('button:has-text("Publish")').first
+        first_btn.scroll_into_view_if_needed()
+        first_btn.click(force=True)
+        print("✓ FIRST PUBLISH CLICKED. Checking for Modal/Pop-up...")
     except Exception as e:
-        print(f"❌ Final Publish failed or Pop-up didn't appear: {e}")
+        print(f"Failed to click initial publish: {e}")
         return False
 
-    return verify(page, post["title"])
+    page.wait_for_timeout(3000)
 
+    # 5. SECOND / FINAL PUBLISH POP-UP HANDLING
+    modal_selectors = [
+        'div[role="dialog"] button:has-text("Publish")',
+        '.modal-content button:has-text("Publish")',
+        '.modal button:has-text("Publish")',
+        'div.fixed button:has-text("Publish")',
+        'button:has-text("Confirm")',
+        'button:has-text("Submit")'
+    ]
+    
+    found_modal = False
+    for selector in modal_selectors:
+        try:
+            btn = page.locator(selector).last
+            if btn.is_visible(timeout=5000):
+                print(f"✓ Final Button found with selector: {selector}")
+                page.wait_for_timeout(1000)
+                btn.click(force=True)
+                print("✓ Final Button Clicked!")
+                found_modal = True
+                break
+        except:
+            continue
+
+    if not found_modal:
+        print("⚠️ Pop-up button not found directly, checking if page already submitted...")
+        page.screenshot(path="debug_error.png")
+
+    page.wait_for_timeout(10000)
+
+    return verify(page, post["title"])
 
 # ============================================================
 # MAIN
@@ -485,7 +492,6 @@ def main():
     print("=" * 60)
     print("SYNC COMPLETED")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     main()
