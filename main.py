@@ -784,31 +784,117 @@ def login(page):
 
 def find_title_box(page):
 
+    print("Looking for Serey title field...")
+
     selectors = [
         'input[placeholder="Enter title..."]',
-        'input[placeholder*="Enter title" i]',
+        'textarea[placeholder="Enter title..."]',
+        'input[placeholder*="title" i]',
+        'textarea[placeholder*="title" i]',
         'input[name="title"]',
-        'input[placeholder*="title" i]'
+        'textarea[name="title"]',
+        '[contenteditable="true"]'
     ]
+
+    # Wait for page/editor to appear
+    try:
+        page.wait_for_timeout(3000)
+    except Exception:
+        pass
 
     for selector in selectors:
 
         try:
             locator = page.locator(selector)
 
-            if locator.count() > 0:
+            count = locator.count()
 
-                for i in range(locator.count()):
+            print(
+                f"Checking selector: {selector} "
+                f"-> {count}"
+            )
+
+            if count > 0:
+
+                for i in range(count):
 
                     candidate = locator.nth(i)
 
-                    if candidate.is_visible():
-                        return candidate
+                    try:
 
-        except Exception:
-            pass
+                        if candidate.is_visible():
 
-    return None
+                            print(
+                                f"✓ Title field found: "
+                                f"{selector}"
+                            )
+
+                            return candidate
+
+                    except Exception:
+                        pass
+
+        except Exception as e:
+
+            print(
+                f"Selector error: "
+                f"{selector} -> {e}"
+            )
+
+    # --------------------------------------------------------
+    # Last attempt: inspect visible inputs
+    # --------------------------------------------------------
+
+    try:
+
+        inputs = page.locator(
+            "input, textarea"
+        )
+
+        count = inputs.count()
+
+        print(
+            f"Visible input/textarea count: {count}"
+        )
+
+        for i in range(count):
+
+            candidate = inputs.nth(i)
+
+            try:
+
+                if not candidate.is_visible():
+                    continue
+
+                placeholder = candidate.get_attribute(
+                    "placeholder"
+                )
+
+                name = candidate.get_attribute(
+                    "name"
+                )
+
+                input_type = candidate.get_attribute(
+                    "type"
+                )
+
+                print(
+                    f"Field {i}: "
+                    f"type={input_type}, "
+                    f"name={name}, "
+                    f"placeholder={placeholder}"
+                )
+
+            except Exception:
+                pass
+
+    except Exception as e:
+
+        print(
+            f"Could not inspect fields: {e}"
+        )
+
+    return Nonee
 
 
 # ============================================================
@@ -946,7 +1032,16 @@ def try_upload_body_images(page, downloaded_images):
 # ============================================================
 # VERIFY PUBLISH
 # ============================================================
+title_box = find_title_box(page)
 
+if not title_box:
+    raise RuntimeError(
+        "Serey title input not found."
+    )
+
+title_box.fill(title)
+
+print("✓ Title filled")
 def verify(page):
 
     time.sleep(5)
