@@ -163,13 +163,11 @@ def extract_body_images(body):
 
     images = []
 
-    # Markdown image
     markdown_pattern = re.compile(
         r'!\[[^\]]*\]\(\s*(https?://[^)\s]+)',
         re.IGNORECASE
     )
 
-    # HTML image
     html_pattern = re.compile(
         r'<img[^>]+src=["\'](https?://[^"\']+)["\']',
         re.IGNORECASE
@@ -217,6 +215,7 @@ def extract_metadata_images(post):
                 meta_images,
                 str
             ):
+
                 meta_images = [
                     meta_images
                 ]
@@ -267,6 +266,7 @@ def split_body_with_images(body):
         ]
 
         if text_part:
+
             parts.append(
                 ("text", text_part)
             )
@@ -285,6 +285,7 @@ def split_body_with_images(body):
     remaining = body[last:]
 
     if remaining:
+
         parts.append(
             ("text", remaining)
         )
@@ -300,9 +301,6 @@ def clean_post(body):
 
     if not body:
         return ""
-
-    # Do not rewrite the actual content.
-    # Only reduce extreme empty lines.
 
     body = re.sub(
         r"\n{4,}",
@@ -429,6 +427,7 @@ def get_posts():
                 )
 
             except Exception:
+
                 continue
 
             if created_dt < cutoff:
@@ -474,6 +473,7 @@ def get_posts():
             and
             start_permlink == last_permlink
         ):
+
             break
 
         start_author = last_author
@@ -485,7 +485,6 @@ def get_posts():
         if len(batch) < 100:
             break
 
-    # Oldest -> newest
     posts.sort(
         key=lambda x: x["created_dt"]
     )
@@ -512,6 +511,7 @@ def detect_extension(
         or
         "jpg" in content_type
     ):
+
         return ".jpg"
 
     if "png" in content_type:
@@ -526,16 +526,16 @@ def detect_extension(
     if "svg" in content_type:
         return ".svg"
 
-    # Magic bytes
-
     if data.startswith(
         b"\xff\xd8\xff"
     ):
+
         return ".jpg"
 
     if data.startswith(
         b"\x89PNG"
     ):
+
         return ".png"
 
     if (
@@ -543,11 +543,13 @@ def detect_extension(
         and
         b"WEBP" in data[:16]
     ):
+
         return ".webp"
 
     if data.startswith(
         b"GIF8"
     ):
+
         return ".gif"
 
     url_path = (
@@ -613,8 +615,7 @@ def download_image(
 
         raise RuntimeError(
             "Image is larger than "
-            f"{MAX_IMAGE_SIZE // "
-            "(1024 * 1024)} MB."
+            f"{MAX_IMAGE_SIZE // (1024 * 1024)} MB."
         )
 
     extension = detect_extension(
@@ -752,10 +753,6 @@ def login(page):
     if clicked:
         time.sleep(2)
 
-    # --------------------------------------------------------
-    # USERNAME
-    # --------------------------------------------------------
-
     username_selectors = [
         'input[name="username"]',
         'input[name="login"]',
@@ -802,10 +799,6 @@ def login(page):
         SEREY_LOGIN
     )
 
-    # --------------------------------------------------------
-    # PASSWORD
-    # --------------------------------------------------------
-
     password_selectors = [
         'input[type="password"]',
         'input[name="password"]',
@@ -849,10 +842,6 @@ def login(page):
     password_box.fill(
         SEREY_PASSWORD
     )
-
-    # --------------------------------------------------------
-    # LOGIN BUTTON
-    # --------------------------------------------------------
 
     login_buttons = [
         'button:has-text("Login")',
@@ -1059,7 +1048,9 @@ def get_file_inputs(page):
 
 def print_file_inputs(page):
 
-    inputs = get_file_inputs(page)
+    inputs = get_file_inputs(
+        page
+    )
 
     print(
         f"File inputs detected: "
@@ -1106,7 +1097,6 @@ def upload_thumbnail(
 
     try:
 
-        # Input 0 = thumbnail
         inputs[0]["locator"].set_input_files(
             image_path
         )
@@ -1154,15 +1144,6 @@ def find_body_image_input(page):
 
         return None
 
-    # --------------------------------------------------------
-    # IMPORTANT
-    #
-    # Serey current page:
-    #
-    # input 0 = thumbnail
-    # input 1 = body image
-    # --------------------------------------------------------
-
     body_input = inputs[1]
 
     print(
@@ -1207,6 +1188,7 @@ def editor_image_count(
         ).count()
 
     except Exception:
+
         return 0
 
 
@@ -1225,6 +1207,7 @@ def get_editor_html(
         )
 
     except Exception:
+
         return ""
 
 
@@ -1262,18 +1245,12 @@ def upload_body_image(
         f"upload: {before_count}"
     )
 
-    # --------------------------------------------------------
-    # Put cursor in editor
-    # --------------------------------------------------------
-
     try:
+
         editor.click()
+
     except Exception:
         pass
-
-    # --------------------------------------------------------
-    # Get BODY input
-    # --------------------------------------------------------
 
     body_input = (
         find_body_image_input(
@@ -1287,10 +1264,6 @@ def upload_body_image(
             "Serey body image input "
             "not found."
         )
-
-    # --------------------------------------------------------
-    # Upload to input 1
-    # --------------------------------------------------------
 
     try:
 
@@ -1309,10 +1282,6 @@ def upload_body_image(
             "Could not select body "
             f"image: {e}"
         )
-
-    # --------------------------------------------------------
-    # Wait for editor to process upload
-    # --------------------------------------------------------
 
     for _ in range(15):
 
@@ -1335,10 +1304,6 @@ def upload_body_image(
 
             return True
 
-    # --------------------------------------------------------
-    # HTML verification
-    # --------------------------------------------------------
-
     after_html = (
         get_editor_html(
             editor
@@ -1357,10 +1322,6 @@ def upload_body_image(
         )
 
         return True
-
-    # --------------------------------------------------------
-    # FAIL
-    # --------------------------------------------------------
 
     print(
         "✗ Body image upload was "
@@ -1443,10 +1404,6 @@ def fill_body_with_uploaded_images(
         for part_type, value in parts
     )
 
-    # --------------------------------------------------------
-    # No body images
-    # --------------------------------------------------------
-
     if not has_images:
 
         try:
@@ -1479,10 +1436,6 @@ def fill_body_with_uploaded_images(
 
         return
 
-    # --------------------------------------------------------
-    # Clear editor
-    # --------------------------------------------------------
-
     try:
 
         tag = editor.evaluate(
@@ -1507,10 +1460,6 @@ def fill_body_with_uploaded_images(
 
     except Exception:
         pass
-
-    # --------------------------------------------------------
-    # Insert text/images in original order
-    # --------------------------------------------------------
 
     image_number = 0
 
@@ -1672,9 +1621,11 @@ def publish(
 
     print()
     print("=" * 60)
+
     print(
         "Publishing post"
     )
+
     print("=" * 60)
 
     print(
@@ -1698,10 +1649,6 @@ def publish(
 
     time.sleep(2)
 
-    # --------------------------------------------------------
-    # TITLE
-    # --------------------------------------------------------
-
     title_box = find_title_box(
         page
     )
@@ -1720,10 +1667,6 @@ def publish(
         "✓ Title filled"
     )
 
-    # --------------------------------------------------------
-    # EDITOR
-    # --------------------------------------------------------
-
     editor = find_editor(
         page
     )
@@ -1734,10 +1677,6 @@ def publish(
             "Serey content editor "
             "not found."
         )
-
-    # --------------------------------------------------------
-    # BODY IMAGES
-    # --------------------------------------------------------
 
     body_images = (
         extract_body_images(
@@ -1760,20 +1699,12 @@ def publish(
             )
         )
 
-    # --------------------------------------------------------
-    # BODY
-    # --------------------------------------------------------
-
     fill_body_with_uploaded_images(
         page,
         editor,
         body,
         downloaded_images
     )
-
-    # --------------------------------------------------------
-    # THUMBNAIL
-    # --------------------------------------------------------
 
     thumbnail_path = None
 
@@ -1818,10 +1749,6 @@ def publish(
             thumbnail_path
         )
 
-    # --------------------------------------------------------
-    # PUBLISH
-    # --------------------------------------------------------
-
     publish_button = (
         find_publish_button(
             page
@@ -1842,10 +1769,6 @@ def publish(
     publish_button.click()
 
     time.sleep(3)
-
-    # --------------------------------------------------------
-    # Confirmation
-    # --------------------------------------------------------
 
     confirmation_selectors = [
         'button:has-text("Confirm")',
@@ -1886,10 +1809,6 @@ def publish(
 
         except Exception:
             pass
-
-    # --------------------------------------------------------
-    # VERIFY
-    # --------------------------------------------------------
 
     if not verify_publish(
         page
@@ -1948,10 +1867,13 @@ def main():
 
     print()
     print("=" * 60)
+
     print(
         "STEEM -> SEREY AUTO SYNC"
     )
+
     print("=" * 60)
+
     print()
 
     synced = load_synced()
@@ -1969,6 +1891,7 @@ def main():
     posts = get_posts()
 
     print()
+
     print(
         f"Total posts in last "
         f"{DAYS_TO_SYNC} days: "
@@ -2072,9 +1995,7 @@ def main():
             for post in selected:
 
                 print()
-                print(
-                    "=" * 60
-                )
+                print("=" * 60)
 
                 print(
                     post["id"]
@@ -2124,9 +2045,11 @@ def main():
 
     print()
     print("=" * 60)
+
     print(
         "RUN FINISHED"
     )
+
     print("=" * 60)
 
 
