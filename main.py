@@ -2,63 +2,37 @@ import os
 import json
 import re
 import time
-from datetime import datetime, timedelta, timezone
-
 import requests
 from playwright.sync_api import sync_playwright
-
 
 # ============================================================
 # SETTINGS
 # ============================================================
 
-STEEM_USERNAME = os.environ["STEEM_USERNAME"].replace("@", "").strip()
+STEEM_USERNAME = os.environ["STEEM_USERNAME"]
 
 SEREY_LOGIN = os.environ.get(
     "SEREY_LOGIN",
     os.environ.get("SEREY_USERNAME", "")
 ).replace("@", "").strip()
 
-SEREY_PASSWORD = os.environ.get(
-    "SEREY_PASSWORD",
-    ""
-).strip()
+SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-SEREY = "https://serey.io"
-
-NEW_POST = f"{SEREY}/blog/post/new"
+# Current Serey Bengali community
+SEREY = "https://bengali.serey.io"
+NEW_POST = f"{SEREY}/write/new"
 
 SYNC_FILE = "synced_posts.json"
 TEMP_IMAGE = "temp_image.jpg"
 
-# One post per GitHub Actions run
 POSTS_PER_RUN = 1
-
-# Only scan recent posts
-DAYS_TO_SCAN = 60
-
-# Maximum number of Steem API pages
-MAX_PAGES = 10
-
-# ============================================================
-# STEEM RPC NODES
-# ============================================================
 
 STEEM_NODES = [
     "https://api.steemit.com",
+    "https://api.justyy.com",
     "https://api.moecki.online",
+    "https://steem.619.io",
 ]
-
-# ============================================================
-# HTTP SESSION
-# ============================================================
-
-session = requests.Session()
-
-session.headers.update({
-    "User-Agent": "Steem-Serey-Sync/1.0",
-    "Accept": "application/json",
-})
 
 
 # ============================================================
@@ -66,7 +40,6 @@ session.headers.update({
 # ============================================================
 
 def rpc(method, params):
-
     payload = {
         "jsonrpc": "2.0",
         "method": method,
@@ -74,57 +47,29 @@ def rpc(method, params):
         "id": 1
     }
 
-    last_error = None
-
     for node in STEEM_NODES:
-
         try:
+            print(f"RPC: {node}", flush=True)
 
-            print(
-                f"RPC: {node}",
-                flush=True
-            )
-
-            response = session.post(
+            r = requests.post(
                 node,
                 json=payload,
-                timeout=(5, 15)
+                timeout=20
             )
 
-            response.raise_for_status()
-
-            data = response.json()
+            r.raise_for_status()
+            data = r.json()
 
             if "error" in data:
+                raise Exception(data["error"])
 
-                last_error = data["error"]
-
-                print(
-                    f"RPC error from {node}: {data['error']}",
-                    flush=True
-                )
-
-                continue
-
-            print(
-                f"✓ RPC success: {node}",
-                flush=True
-            )
-
+            print(f"✓ RPC success: {node}", flush=True)
             return data["result"]
 
         except Exception as e:
+            print(f"RPC failed: {e}", flush=True)
 
-            last_error = e
-
-            print(
-                f"RPC failed ({node}): {e}",
-                flush=True
-            )
-
-    raise Exception(
-        f"All Steem RPC nodes failed. Last error: {last_error}"
-    )
+    raise Exception("All Steem RPC nodes failed")
 
 
 # ============================================================
@@ -132,110 +77,28 @@ def rpc(method, params):
 # ============================================================
 
 def load_synced():
-
     if not os.path.exists(SYNC_FILE):
         return set()
 
     try:
-
-        with open(
-            SYNC_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
-            data = json.load(f)
-
-        if not isinstance(data, list):
-            return set()
-
-        return set(data)
-
-    except Exception as e:
-
-        print(
-            f"⚠️ Could not read {SYNC_FILE}: {e}",
-            flush=True
-        )
-
+        with open(SYNC_FILE, encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
         return set()
 
 
 def save_synced(data):
-
-    temp_file = SYNC_FILE + ".tmp"
-
-    try:
-
-        with open(
-            temp_file,
-            "w",
-            encoding="utf-8"
-        ) as f:
-
-            json.dump(
-                sorted(data),
-                f,
-                ensure_ascii=False,
-                indent=2
-            )
-
-        os.replace(
-            temp_file,
-            SYNC_FILE
+    with open(
+        SYNC_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+        json.dump(
+            sorted(data),
+            f,
+            ensure_ascii=False,
+            indent=2
         )
-
-        print(
-            f"✓ Sync file saved: {len(data)} posts",
-            flush=True
-        )
-
-    except Exception as e:
-
-        print(
-            f"❌ Failed to save sync file: {e}",
-            flush=True
-        )
-
-        if os.path.exists(temp_file):
-
-            try:
-                os.remove(temp_file)
-            except:
-                pass
-
-
-# ============================================================
-# DATE PARSER
-# ============================================================
-
-def parse_steem_date(value):
-
-    if not value:
-        return None
-
-    try:
-
-        value = str(value).strip()
-
-        # Steem normally returns:
-        # 2026-09-18T10:20:30
-
-        dt = datetime.fromisoformat(
-            value.replace("Z", "+00:00")
-        )
-
-        # Make sure datetime is timezone-aware
-        if dt.tzinfo is None:
-            dt = dt.replace(
-                tzinfo=timezone.utc
-            )
-
-        return dt
-
-    except Exception:
-
-        return None
 
 
 # ============================================================
@@ -243,58 +106,28 @@ def parse_steem_date(value):
 # ============================================================
 
 def clean_post(body, metadata):
-
     image = None
 
-    # --------------------------------------------------------
-    # Try JSON metadata image
-    # --------------------------------------------------------
-
     try:
+        meta = json.loads(metadata or "{}")
 
-        meta = json.loads(
-            metadata or "{}"
-        )
-
-        images = meta.get(
-            "image",
-            []
-        )
-
-        if isinstance(images, list):
-
-            for item in images:
-
-                if isinstance(item, str):
-
-                    if item.startswith("http"):
-
-                        image = item
-                        break
+        for x in meta.get("image", []):
+            if isinstance(x, str):
+                image = x
+                break
 
     except Exception:
-
         pass
 
-    # --------------------------------------------------------
-    # Try Markdown image
-    # --------------------------------------------------------
-
     if not image:
-
-        match = re.search(
+        m = re.search(
             r'!\[[^\]]*\]\((https?://[^)\s]+)',
             body,
             re.I
         )
 
-        if match:
-
-            image = match.group(1)
-
-    # --------------------------------------------------------
-    # Remove Markdown images
-    # --------------------------------------------------------
+        if m:
+            image = m.group(1)
 
     body = re.sub(
         r'!\[[^\]]*\]\([^)]+\)',
@@ -302,20 +135,12 @@ def clean_post(body, metadata):
         body
     )
 
-    # --------------------------------------------------------
-    # Remove direct image URLs
-    # --------------------------------------------------------
-
     body = re.sub(
         r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?',
         '',
         body,
         flags=re.I
     )
-
-    # --------------------------------------------------------
-    # Remove excessive blank lines
-    # --------------------------------------------------------
 
     body = re.sub(
         r'\n{3,}',
@@ -327,34 +152,22 @@ def clean_post(body, metadata):
 
 
 # ============================================================
-# GET RECENT STEEM POSTS
+# GET STEEM POSTS
 # ============================================================
 
 def get_posts():
-
     print(
-        f"Getting recent posts from @{STEEM_USERNAME}...",
+        f"Getting posts from @{STEEM_USERNAME}...",
         flush=True
     )
 
     posts = []
-
     seen = set()
-
-    cutoff = (
-        datetime.now(timezone.utc)
-        - timedelta(days=DAYS_TO_SCAN)
-    )
 
     start_author = None
     start_permlink = None
 
-    previous_cursor = None
-
-    for page_number in range(
-        1,
-        MAX_PAGES + 1
-    ):
+    while len(posts) < 5000:
 
         params = {
             "tag": STEEM_USERNAME,
@@ -362,204 +175,76 @@ def get_posts():
         }
 
         if start_author:
+            params["start_author"] = start_author
+            params["start_permlink"] = start_permlink
 
-            params["start_author"] = (
-                start_author
-            )
-
-            params["start_permlink"] = (
-                start_permlink
-            )
-
-        try:
-
-            result = rpc(
-                "condenser_api.get_discussions_by_blog",
-                params
-            )
-
-        except Exception as e:
-
-            print(
-                f"❌ Failed to get Steem posts: {e}",
-                flush=True
-            )
-
-            break
-
-        if not result:
-
-            print(
-                "No more Steem results.",
-                flush=True
-            )
-
-            break
-
-        print(
-            f"Steem page {page_number}: "
-            f"{len(result)} results",
-            flush=True
+        result = rpc(
+            "condenser_api.get_discussions_by_blog",
+            params
         )
 
-        reached_cutoff = False
+        if not result:
+            break
 
-        for post in result:
+        batch = result[1:] if start_author else result
 
-            author = (
-                post.get("author", "")
-                or ""
-            ).strip()
+        if not batch:
+            break
 
-            permlink = (
-                post.get("permlink", "")
-                or ""
-            ).strip()
+        for p in batch:
 
-            if not author or not permlink:
+            if p.get("author") != STEEM_USERNAME:
                 continue
 
-            post_id = (
-                f"{author}/{permlink}"
-            )
+            author = p.get("author", "")
+            permlink = p.get("permlink", "")
 
-            if post_id in seen:
+            if not permlink:
                 continue
 
-            seen.add(post_id)
+            pid = f"{author}/{permlink}"
 
-            # Only our own posts
-            if author != STEEM_USERNAME:
+            if pid in seen:
                 continue
 
-            created_raw = (
-                post.get("created", "")
-                or ""
-            )
-
-            created = parse_steem_date(
-                created_raw
-            )
-
-            # Stop collecting old posts
-            if created:
-
-                if created < cutoff:
-
-                    reached_cutoff = True
-                    continue
+            seen.add(pid)
 
             body, image = clean_post(
-                post.get("body", ""),
-                post.get(
-                    "json_metadata",
-                    "{}"
-                )
+                p.get("body", ""),
+                p.get("json_metadata", "{}")
             )
 
             posts.append({
-
-                "id": post_id,
-
-                "title": (
-                    post.get("title", "")
-                    or ""
-                ).strip(),
-
+                "id": pid,
+                "title": p.get("title", "").strip(),
                 "body": body,
-
                 "image": image,
-
-                "category": (
-                    post.get("category", "")
-                    or ""
-                ),
-
-                "created": created_raw
-
+                "category": p.get("category", "")
             })
-
-        # ----------------------------------------------------
-        # Stop when 60-day limit reached
-        # ----------------------------------------------------
-
-        if reached_cutoff:
-
-            print(
-                f"✓ Reached {DAYS_TO_SCAN}-day cutoff.",
-                flush=True
-            )
-
-            break
-
-        # ----------------------------------------------------
-        # Pagination cursor
-        # ----------------------------------------------------
 
         last = result[-1]
 
-        new_author = (
-            last.get("author", "")
-            or ""
-        )
+        new_author = last.get("author")
+        new_permlink = last.get("permlink")
 
-        new_permlink = (
-            last.get("permlink", "")
-            or ""
-        )
-
-        if not new_author or not new_permlink:
-
-            print(
-                "Pagination stopped: invalid cursor.",
-                flush=True
-            )
-
+        if (
+            new_author == start_author
+            and new_permlink == start_permlink
+        ):
             break
-
-        new_cursor = (
-            f"{new_author}/{new_permlink}"
-        )
-
-        # Prevent infinite pagination loop
-        if new_cursor == previous_cursor:
-
-            print(
-                "Pagination stopped: repeated cursor.",
-                flush=True
-            )
-
-            break
-
-        previous_cursor = new_cursor
 
         start_author = new_author
         start_permlink = new_permlink
 
-        # Less than 100 means no more pages
         if len(result) < 100:
-
             break
 
-        time.sleep(0.25)
+        time.sleep(0.3)
 
-    # --------------------------------------------------------
-    # Oldest → newest
-    # --------------------------------------------------------
-
-    posts.sort(
-        key=lambda x: (
-            parse_steem_date(
-                x.get("created", "")
-            )
-            or datetime.min.replace(
-                tzinfo=timezone.utc
-            )
-        )
-    )
+    posts.reverse()
 
     print(
-        f"✓ Recent posts found: {len(posts)}",
+        f"Total posts: {len(posts)}",
         flush=True
     )
 
@@ -573,212 +258,41 @@ def get_posts():
 def download_image(url):
 
     if not url:
-
-        print(
-            "No thumbnail image found.",
-            flush=True
-        )
-
         return None
 
     try:
-
         print(
             f"Downloading image: {url}",
             flush=True
         )
 
-        response = session.get(
+        r = requests.get(
             url,
-            timeout=(5, 20),
+            timeout=20,
             headers={
                 "User-Agent": "Mozilla/5.0"
             }
         )
 
-        response.raise_for_status()
+        r.raise_for_status()
 
-        content_type = (
-            response.headers
-            .get("content-type", "")
-            .lower()
-        )
-
-        if "image" not in content_type:
-
-            print(
-                f"⚠️ URL did not return an image: "
-                f"{content_type}",
-                flush=True
-            )
-
+        if "image" not in r.headers.get(
+            "content-type",
+            ""
+        ).lower():
             return None
 
-        with open(
-            TEMP_IMAGE,
-            "wb"
-        ) as f:
-
-            f.write(
-                response.content
-            )
-
-        print(
-            "✓ Image downloaded.",
-            flush=True
-        )
+        with open(TEMP_IMAGE, "wb") as f:
+            f.write(r.content)
 
         return TEMP_IMAGE
 
     except Exception as e:
-
         print(
-            f"⚠️ Image download failed: {e}",
+            f"Image download failed: {e}",
             flush=True
         )
-
         return None
-
-
-# ============================================================
-# SAFE CLICK HELPER
-# ============================================================
-
-def safe_click(
-    page,
-    selectors,
-    name="button",
-    timeout=3000
-):
-
-    for selector in selectors:
-
-        try:
-
-            locator = page.locator(
-                selector
-            ).last
-
-            if locator.is_visible(
-                timeout=timeout
-            ):
-
-                locator.scroll_into_view_if_needed(
-                    timeout=5000
-                )
-
-                locator.click(
-                    force=True,
-                    timeout=5000
-                )
-
-                print(
-                    f"✓ Clicked {name}: {selector}",
-                    flush=True
-                )
-
-                return True
-
-        except Exception:
-            continue
-
-    return False
-
-
-# ============================================================
-# CLOSE IMAGE CROP MODAL
-# ============================================================
-
-def handle_crop_modal(page):
-
-    print(
-        "Checking image crop modal...",
-        flush=True
-    )
-
-    # Ant Design image crop modal
-    crop_selectors = [
-
-        '.antd-img-crop-modal button:has-text("OK")',
-
-        '.antd-img-crop-modal button:has-text("Confirm")',
-
-        '.antd-img-crop-modal button:has-text("Done")',
-
-        '.antd-img-crop-modal button:has-text("Save")',
-
-        '.antd-img-crop-modal button:has-text("Apply")',
-
-        '[role="dialog"] button:has-text("OK")',
-
-        '[role="dialog"] button:has-text("Confirm")',
-
-        '[role="dialog"] button:has-text("Done")',
-
-        '[role="dialog"] button:has-text("Save")',
-
-        '[role="dialog"] button:has-text("Apply")',
-
-    ]
-
-    if safe_click(
-        page,
-        crop_selectors,
-        "crop confirmation",
-        timeout=1500
-    ):
-
-        page.wait_for_timeout(
-            3000
-        )
-
-        print(
-            "✓ Image crop modal handled.",
-            flush=True
-        )
-
-        return True
-
-    # Sometimes modal has an X close button
-    try:
-
-        modal = page.locator(
-            ".antd-img-crop-modal"
-        )
-
-        if modal.count() > 0:
-
-            if modal.first.is_visible(
-                timeout=1000
-            ):
-
-                close_selectors = [
-
-                    '.antd-img-crop-modal button[aria-label="Close"]',
-
-                    '.antd-img-crop-modal .ant-modal-close',
-
-                    '.antd-img-crop-modal [aria-label="close"]',
-
-                ]
-
-                if safe_click(
-                    page,
-                    close_selectors,
-                    "crop modal close",
-                    timeout=1000
-                ):
-
-                    page.wait_for_timeout(
-                        2000
-                    )
-
-                    return True
-
-    except Exception:
-        pass
-
-    return False
 
 
 # ============================================================
@@ -787,10 +301,7 @@ def handle_crop_modal(page):
 
 def login(page):
 
-    print(
-        "Logging into Serey...",
-        flush=True
-    )
+    print("Logging into Serey...", flush=True)
 
     page.goto(
         SEREY,
@@ -798,177 +309,111 @@ def login(page):
         timeout=60000
     )
 
-    page.wait_for_timeout(
-        4000
-    )
+    page.wait_for_timeout(5000)
 
-    # --------------------------------------------------------
     # Login trigger
-    # --------------------------------------------------------
-
     login_selectors = [
-
         'a:has-text("Log in")',
-
         'button:has-text("Log in")',
-
         'a:has-text("Log In")',
-
-        'button:has-text("Log In")',
-
+        'button:has-text("Log In")'
     ]
 
-    clicked = safe_click(
-        page,
-        login_selectors,
-        "login button",
-        timeout=5000
-    )
+    clicked = False
+
+    for selector in login_selectors:
+        try:
+            loc = page.locator(selector).first
+
+            if loc.is_visible(timeout=3000):
+                loc.click(force=True)
+                clicked = True
+                break
+
+        except Exception:
+            pass
 
     if not clicked:
+        raise Exception("Serey login button not found.")
 
-        print(
-            "⚠️ Login button not found.",
-            flush=True
-        )
+    page.wait_for_timeout(3000)
 
-    page.wait_for_timeout(
-        3000
-    )
-
-    # --------------------------------------------------------
     # Username
-    # --------------------------------------------------------
-
     username_selectors = [
-
         'input[placeholder*="Username"]',
-
         'input[placeholder*="username"]',
-
         'input[name="username"]',
-
-        'input[type="text"]',
-
+        'input[type="text"]'
     ]
 
     username_box = None
 
     for selector in username_selectors:
-
         try:
+            loc = page.locator(selector).first
 
-            box = page.locator(
-                selector
-            ).first
-
-            if box.is_visible(
-                timeout=1500
-            ):
-
-                username_box = box
+            if loc.is_visible(timeout=2000):
+                username_box = loc
                 break
 
-        except:
-            continue
+        except Exception:
+            pass
 
     if not username_box:
+        raise Exception("Serey username input not found.")
 
-        raise Exception(
-            "Serey username input not found."
-        )
+    username_box.fill(SEREY_LOGIN)
 
-    username_box.fill(
-        SEREY_LOGIN
-    )
-
-    # --------------------------------------------------------
-    # Private Key / Password
-    # --------------------------------------------------------
-
-    password_selectors = [
-
+    # Private key
+    key_selectors = [
         'input[placeholder*="Private Key"]',
-
         'input[placeholder*="private key"]',
-
-        'input[placeholder*="Password"]',
-
-        'input[placeholder*="password"]',
-
-        'input[type="password"]',
-
+        'input[type="password"]'
     ]
 
-    password_box = None
+    key_box = None
 
-    for selector in password_selectors:
-
+    for selector in key_selectors:
         try:
+            loc = page.locator(selector).first
 
-            box = page.locator(
-                selector
-            ).first
-
-            if box.is_visible(
-                timeout=1500
-            ):
-
-                password_box = box
+            if loc.is_visible(timeout=2000):
+                key_box = loc
                 break
 
-        except:
-            continue
+        except Exception:
+            pass
 
-    if not password_box:
+    if not key_box:
+        raise Exception("Serey private key input not found.")
 
-        raise Exception(
-            "Serey password/private-key input not found."
-        )
+    key_box.fill(SEREY_PASSWORD)
 
-    password_box.fill(
-        SEREY_PASSWORD
-    )
+    # Login submit
+    submit_selectors = [
+        'button:has-text("Log in")',
+        'button:has-text("Log In")',
+        'button[type="submit"]'
+    ]
 
-    # --------------------------------------------------------
-    # Final login
-    # --------------------------------------------------------
+    submitted = False
 
-    if not safe_click(
-        page,
-        [
-            'button:has-text("Log in")',
-            'button:has-text("Log In")',
-            'button[type="submit"]',
-        ],
-        "final login",
-        timeout=3000
-    ):
+    for selector in submit_selectors:
+        try:
+            loc = page.locator(selector).last
 
-        raise Exception(
-            "Serey final login button not found."
-        )
+            if loc.is_visible(timeout=3000):
+                loc.click(force=True)
+                submitted = True
+                break
 
-    page.wait_for_timeout(
-        7000
-    )
+        except Exception:
+            pass
 
-    # --------------------------------------------------------
-    # Verify login
-    # --------------------------------------------------------
+    if not submitted:
+        raise Exception("Serey login submit button not found.")
 
-    current_url = page.url
-
-    print(
-        f"Login result URL: {current_url}",
-        flush=True
-    )
-
-    if "/login" in current_url.lower():
-
-        raise Exception(
-            "Serey login appears to have failed."
-        )
+    page.wait_for_timeout(8000)
 
     print(
         "✓ LOGGED INTO SEREY SUCCESSFULLY!",
@@ -977,7 +422,61 @@ def login(page):
 
 
 # ============================================================
-# VERIFY PUBLISHED POST
+# FIND TITLE INPUT
+# ============================================================
+
+def find_title_box(page):
+
+    selectors = [
+        'input[placeholder="Enter title..."]',
+        'input[placeholder*="Enter title"]',
+        'input[placeholder*="Title"]',
+        'textarea[placeholder*="Enter title"]'
+    ]
+
+    for selector in selectors:
+
+        try:
+            loc = page.locator(selector).first
+
+            if loc.is_visible(timeout=2500):
+                return loc
+
+        except Exception:
+            pass
+
+    return None
+
+
+# ============================================================
+# FIND CONTENT EDITOR
+# ============================================================
+
+def find_editor(page):
+
+    selectors = [
+        'textarea[placeholder="Enter content..."]',
+        'textarea[placeholder*="Enter content"]',
+        'div[contenteditable="true"]',
+        '[contenteditable="true"]'
+    ]
+
+    for selector in selectors:
+
+        try:
+            loc = page.locator(selector).first
+
+            if loc.is_visible(timeout=2500):
+                return loc
+
+        except Exception:
+            pass
+
+    return None
+
+
+# ============================================================
+# VERIFY
 # ============================================================
 
 def verify(page, title):
@@ -987,123 +486,53 @@ def verify(page, title):
         flush=True
     )
 
-    for attempt in range(1, 9):
+    for _ in range(10):
+
+        page.wait_for_timeout(3000)
+
+        url = page.url
 
         print(
-            f"Verification attempt {attempt}/8",
+            f"Current URL: {url}",
             flush=True
         )
 
-        page.wait_for_timeout(
-            3000
-        )
-
-        current_url = page.url
-
-        print(
-            f"Current URL: {current_url}",
-            flush=True
-        )
-
-        # ----------------------------------------------------
-        # Author post URL
-        # ----------------------------------------------------
-
-        if (
-            "/authors/" in current_url
-            and "/blog/post/new" not in current_url
-        ):
+        # If we left the write page, publication may have succeeded
+        if "/write/new" not in url:
 
             print(
-                "✓ SUCCESS: POST PUBLISHED!",
+                "✓ SUCCESS: Serey left the Write page.",
                 flush=True
             )
 
             return True
 
-        # ----------------------------------------------------
-        # Success text
-        # ----------------------------------------------------
-
+        # Common success messages
         success_texts = [
-
-            "Successfully posted your article",
-
             "Successfully posted",
-
-            "Article published",
-
-            "Post published",
-
             "Successfully published",
-
+            "Article published",
+            "Post published",
+            "successfully posted your article"
         ]
 
-        for text_value in success_texts:
+        for text in success_texts:
 
             try:
-
                 if page.get_by_text(
-                    text_value,
+                    text,
                     exact=False
-                ).first.is_visible(
-                    timeout=1000
-                ):
+                ).is_visible(timeout=1000):
 
                     print(
-                        f"✓ SUCCESS MESSAGE: {text_value}",
+                        f"✓ SUCCESS MESSAGE DETECTED: {text}",
                         flush=True
                     )
 
                     return True
 
-            except:
-                continue
-
-        # ----------------------------------------------------
-        # Look for author link
-        # ----------------------------------------------------
-
-        try:
-
-            author_links = page.locator(
-                'a[href*="/authors/"]'
-            )
-
-            if author_links.count() > 0:
-
-                for i in range(
-                    min(author_links.count(), 10)
-                ):
-
-                    href = author_links.nth(
-                        i
-                    ).get_attribute(
-                        "href"
-                    )
-
-                    if href and "/authors/" in href:
-
-                        print(
-                            f"✓ Author post/profile URL detected: {href}",
-                            flush=True
-                        )
-
-                        # Don't immediately assume profile is success
-                        # unless it is a post-like author URL.
-                        parts = href.strip("/").split("/")
-
-                        if len(parts) >= 3:
-
-                            print(
-                                "✓ SUCCESS: Author post URL detected.",
-                                flush=True
-                            )
-
-                            return True
-
-        except:
-            pass
+            except Exception:
+                pass
 
     print(
         "❌ Publication could not be verified.",
@@ -1114,193 +543,20 @@ def verify(page, title):
 
 
 # ============================================================
-# FIND PUBLISH BUTTON
-# ============================================================
-
-def click_first_publish(page):
-
-    print(
-        "Attempting first Publish button...",
-        flush=True
-    )
-
-    publish_selectors = [
-
-        'button:has-text("Publish")',
-
-        'button:has-text("publish")',
-
-        'div[role="button"]:has-text("Publish")',
-
-        'span:has-text("Publish")',
-
-    ]
-
-    if safe_click(
-        page,
-        publish_selectors,
-        "first Publish",
-        timeout=3000
-    ):
-
-        return True
-
-    # --------------------------------------------------------
-    # JavaScript fallback
-    # --------------------------------------------------------
-
-    try:
-
-        clicked = page.evaluate(
-            """
-            () => {
-
-                const elements = Array.from(
-                    document.querySelectorAll(
-                        'button, div[role="button"], span'
-                    )
-                );
-
-                const target = elements.find(
-                    el =>
-                        el.innerText &&
-                        el.innerText.trim() === "Publish"
-                );
-
-                if (target) {
-
-                    target.click();
-
-                    return true;
-                }
-
-                return false;
-            }
-            """
-        )
-
-        if clicked:
-
-            print(
-                "✓ Publish clicked using JavaScript.",
-                flush=True
-            )
-
-            return True
-
-    except Exception as e:
-
-        print(
-            f"JavaScript publish click failed: {e}",
-            flush=True
-        )
-
-    return False
-
-
-# ============================================================
-# FINAL PUBLISH / CONFIRMATION MODAL
-# ============================================================
-
-def handle_final_publish(page):
-
-    print(
-        "Checking Final Publish Modal...",
-        flush=True
-    )
-
-    # --------------------------------------------------------
-    # Wait briefly for modal
-    # --------------------------------------------------------
-
-    page.wait_for_timeout(
-        3000
-    )
-
-    # --------------------------------------------------------
-    # Final publish buttons
-    # --------------------------------------------------------
-
-    final_selectors = [
-
-        'div[role="dialog"] button:has-text("Publish")',
-
-        '.modal-content button:has-text("Publish")',
-
-        '.modal button:has-text("Publish")',
-
-        'div.fixed button:has-text("Publish")',
-
-        'div[class*="modal"] button:has-text("Publish")',
-
-        'div[class*="dialog"] button:has-text("Publish")',
-
-        'div[role="dialog"] button:has-text("Confirm")',
-
-        'div[role="dialog"] button:has-text("Submit")',
-
-        'div[role="dialog"] button:has-text("Yes")',
-
-        'button:has-text("Confirm")',
-
-        'button:has-text("Submit")',
-
-    ]
-
-    if safe_click(
-        page,
-        final_selectors,
-        "FINAL PUBLISH",
-        timeout=2500
-    ):
-
-        print(
-            "✓ FINAL PUBLISH CLICKED!",
-            flush=True
-        )
-
-        page.wait_for_timeout(
-            7000
-        )
-
-        return True
-
-    print(
-        "⚠️ No final Publish modal detected.",
-        flush=True
-    )
-
-    return False
-
-
-# ============================================================
-# PUBLISH ONE POST
+# PUBLISH
 # ============================================================
 
 def publish(page, post):
 
-    print(
-        "-" * 60,
-        flush=True
-    )
+    print("-" * 60)
 
     print(
         f"Publishing: {post['title']}",
         flush=True
     )
 
-    print(
-        f"Steem ID: {post['id']}",
-        flush=True
-    )
-
-    print(
-        f"Created: {post.get('created', '')}",
-        flush=True
-    )
-
     # --------------------------------------------------------
-    # Open new post page
+    # OPEN CURRENT SEREY WRITE PAGE
     # --------------------------------------------------------
 
     page.goto(
@@ -1309,95 +565,60 @@ def publish(page, post):
         timeout=60000
     )
 
-    page.wait_for_timeout(
-        5000
+    page.wait_for_timeout(5000)
+
+    print(
+        f"Write page: {page.url}",
+        flush=True
     )
 
     # --------------------------------------------------------
     # TITLE
     # --------------------------------------------------------
 
-    title_selectors = [
-
-        'input[placeholder*="Enter title"]',
-
-        'input[placeholder*="Title"]',
-
-        'input[name="title"]',
-
-    ]
-
-    title_box = None
-
-    for selector in title_selectors:
-
-        try:
-
-            box = page.locator(
-                selector
-            ).first
-
-            if box.is_visible(
-                timeout=2000
-            ):
-
-                title_box = box
-                break
-
-        except:
-            continue
+    title_box = find_title_box(page)
 
     if not title_box:
-
         raise Exception(
             "Serey title input not found."
         )
 
     title_box.click()
-
-    title_box.fill(
-        post["title"]
-    )
+    title_box.fill(post["title"])
 
     print(
-        "✓ Title filled.",
+        "✓ Title filled",
         flush=True
     )
 
-    page.wait_for_timeout(
-        1000
-    )
+    page.wait_for_timeout(1000)
 
     # --------------------------------------------------------
     # BODY
     # --------------------------------------------------------
 
-    editor = page.locator(
-        'div[contenteditable="true"]'
-    ).first
+    editor = find_editor(page)
 
-    if not editor.is_visible(
-        timeout=5000
-    ):
-
+    if not editor:
         raise Exception(
             "Serey content editor not found."
         )
 
     editor.click()
 
-    editor.fill(
-        post["body"]
-    )
+    try:
+        editor.fill(post["body"])
+    except Exception:
+
+        # Fallback for rich text editor
+        page.keyboard.insert_text(post["body"])
 
     print(
-        "✓ Body filled.",
+        "✓ Body filled",
         flush=True
     )
 
-    page.wait_for_timeout(
-        2000
-    )
+    page.wait_for_timeout(2000)
 
     # --------------------------------------------------------
     # THUMBNAIL
@@ -1415,35 +636,26 @@ def publish(page, post):
                 'input[type="file"]'
             )
 
-            if file_inputs.count() > 0:
+            count = file_inputs.count()
 
+            if count > 0:
+
+                # Usually the first file input is thumbnail
                 file_inputs.first.set_input_files(
                     image
                 )
 
                 print(
-                    "✓ Thumbnail selected.",
+                    "✓ Thumbnail uploaded",
                     flush=True
                 )
 
-                # Give Serey time to upload/process
-                page.wait_for_timeout(
-                    5000
-                )
-
-                # Important:
-                # Serey image crop modal can block Publish
-                handle_crop_modal(page)
-
-                page.wait_for_timeout(
-                    3000
-                )
+                page.wait_for_timeout(7000)
 
             else:
 
                 print(
-                    "⚠️ File input not found. "
-                    "Continuing without thumbnail.",
+                    "⚠️ No file input found for thumbnail.",
                     flush=True
                 )
 
@@ -1454,51 +666,156 @@ def publish(page, post):
                 flush=True
             )
 
-    else:
+    # --------------------------------------------------------
+    # FIRST PUBLISH BUTTON
+    # --------------------------------------------------------
+
+    print(
+        "Looking for Publish button...",
+        flush=True
+    )
+
+    publish_selectors = [
+        'button:has-text("Publish")',
+        'button:has-text("publish")',
+        '[role="button"]:has-text("Publish")',
+        'button[type="submit"]'
+    ]
+
+    clicked = False
+
+    for selector in publish_selectors:
+
+        try:
+
+            buttons = page.locator(selector)
+            count = buttons.count()
+
+            for i in range(count):
+
+                btn = buttons.nth(i)
+
+                if btn.is_visible(timeout=1000):
+
+                    btn.scroll_into_view_if_needed()
+
+                    btn.click(force=True)
+
+                    print(
+                        f"✓ Publish button clicked: {selector}",
+                        flush=True
+                    )
+
+                    clicked = True
+                    break
+
+            if clicked:
+                break
+
+        except Exception:
+            pass
+
+    if not clicked:
 
         print(
-            "⚠️ No image available. "
-            "Publishing without thumbnail.",
+            "Trying JavaScript Publish click...",
+            flush=True
+        )
+
+        result = page.evaluate("""
+        () => {
+            const elements = Array.from(
+                document.querySelectorAll(
+                    'button, [role="button"]'
+                )
+            );
+
+            const target = elements.find(el => {
+                const text =
+                    (el.innerText || el.textContent || '')
+                    .trim()
+                    .toLowerCase();
+
+                return text === 'publish';
+            });
+
+            if (target) {
+                target.click();
+                return true;
+            }
+
+            return false;
+        }
+        """)
+
+        if result:
+            print(
+                "✓ JavaScript Publish click executed",
+                flush=True
+            )
+            clicked = True
+
+    if not clicked:
+        raise Exception(
+            "Serey Publish button not found."
+        )
+
+    # --------------------------------------------------------
+    # WAIT FOR MODAL / CONFIRMATION
+    # --------------------------------------------------------
+
+    page.wait_for_timeout(5000)
+
+    print(
+        "Checking for final confirmation...",
+        flush=True
+    )
+
+    modal_selectors = [
+        'div[role="dialog"] button:has-text("Publish")',
+        'div[role="dialog"] button:has-text("Confirm")',
+        'div[role="dialog"] button:has-text("Submit")',
+        '[class*="modal"] button:has-text("Publish")',
+        '[class*="modal"] button:has-text("Confirm")',
+        '[class*="dialog"] button:has-text("Publish")',
+        '[class*="dialog"] button:has-text("Confirm")'
+    ]
+
+    final_clicked = False
+
+    for selector in modal_selectors:
+
+        try:
+
+            loc = page.locator(selector).last
+
+            if loc.is_visible(timeout=1500):
+
+                loc.click(force=True)
+
+                print(
+                    f"✓ Final confirmation clicked: {selector}",
+                    flush=True
+                )
+
+                final_clicked = True
+                break
+
+        except Exception:
+            pass
+
+    if not final_clicked:
+
+        print(
+            "No confirmation modal detected.",
             flush=True
         )
 
     # --------------------------------------------------------
-    # Make sure crop modal is not blocking
+    # WAIT
     # --------------------------------------------------------
 
-    handle_crop_modal(page)
-
-    page.wait_for_timeout(
-        1000
-    )
-
-    # --------------------------------------------------------
-    # FIRST PUBLISH
-    # --------------------------------------------------------
-
-    if not click_first_publish(page):
-
-        raise Exception(
-            "Could not click first Publish button."
-        )
-
-    # --------------------------------------------------------
-    # FINAL MODAL
-    # --------------------------------------------------------
-
-    handle_final_publish(page)
-
-    # --------------------------------------------------------
-    # Wait for navigation / publishing
-    # --------------------------------------------------------
-
-    page.wait_for_timeout(
-        8000
-    )
-
-    # --------------------------------------------------------
-    # VERIFY
-    # --------------------------------------------------------
+    page.wait_for_timeout(10000)
 
     return verify(
         page,
@@ -1512,24 +829,9 @@ def publish(page, post):
 
 def main():
 
-    print(
-        "=" * 60,
-        flush=True
-    )
-
-    print(
-        "STEEM -> SEREY AUTO SYNC",
-        flush=True
-    )
-
-    print(
-        "=" * 60,
-        flush=True
-    )
-
-    # --------------------------------------------------------
-    # Load sync history
-    # --------------------------------------------------------
+    print("=" * 60)
+    print("STEEM -> SEREY AUTO SYNC")
+    print("=" * 60)
 
     synced = load_synced()
 
@@ -1538,66 +840,28 @@ def main():
         flush=True
     )
 
-    # --------------------------------------------------------
-    # Get recent posts
-    # --------------------------------------------------------
-
     posts = get_posts()
 
-    if not posts:
-
-        print(
-            "No recent Steem posts found.",
-            flush=True
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # Find unsynced
-    # --------------------------------------------------------
-
     new_posts = [
-
-        post
-
-        for post in posts
-
-        if post["id"] not in synced
-
+        p for p in posts
+        if p["id"] not in synced
     ]
 
     print(
-        f"Unsynced recent posts: {len(new_posts)}",
+        f"Unsynced posts: {len(new_posts)}",
         flush=True
     )
 
-    # --------------------------------------------------------
-    # One post per run
-    # --------------------------------------------------------
-
-    posts_to_run = new_posts[
-        :POSTS_PER_RUN
-    ]
+    posts_to_run = new_posts[:POSTS_PER_RUN]
 
     if not posts_to_run:
 
         print(
-            "Nothing new to publish.",
+            "Nothing to publish.",
             flush=True
         )
 
         return
-
-    print(
-        f"Posts selected for this run: "
-        f"{len(posts_to_run)}",
-        flush=True
-    )
-
-    # --------------------------------------------------------
-    # Playwright
-    # --------------------------------------------------------
 
     with sync_playwright() as p:
 
@@ -1606,47 +870,29 @@ def main():
         )
 
         context = browser.new_context(
-
             viewport={
                 "width": 1280,
                 "height": 900
             },
-
             user_agent=(
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 "
                 "(KHTML, like Gecko) "
-                "Chrome/122.0.0.0 "
-                "Safari/537.36"
+                "Chrome/122.0.0.0 Safari/537.36"
             )
-
         )
 
         page = context.new_page()
 
         try:
 
-            # ------------------------------------------------
-            # Login once
-            # ------------------------------------------------
-
             login(page)
-
-            # ------------------------------------------------
-            # Publish selected posts
-            # ------------------------------------------------
 
             for post in posts_to_run:
 
                 try:
 
-                    success = publish(
-                        page,
-                        post
-                    )
-
-                    if success:
+                    if publish(page, post):
 
                         synced.add(
                             post["id"]
@@ -1665,13 +911,7 @@ def main():
                     else:
 
                         print(
-                            "⚠️ Publication was not verified.",
-                            flush=True
-                        )
-
-                        print(
-                            "⚠️ Post will NOT be added "
-                            "to synced_posts.json.",
+                            "⚠️ NOT SAVED AS SYNCED.",
                             flush=True
                         )
 
@@ -1682,58 +922,23 @@ def main():
                         flush=True
                     )
 
-                    print(
-                        "⚠️ This post will remain unsynced "
-                        "for the next run.",
-                        flush=True
-                    )
-
         finally:
 
-            # ------------------------------------------------
-            # Cleanup
-            # ------------------------------------------------
-
-            if os.path.exists(
-                TEMP_IMAGE
-            ):
+            if os.path.exists(TEMP_IMAGE):
 
                 try:
-                    os.remove(
-                        TEMP_IMAGE
-                    )
-                except:
+                    os.remove(TEMP_IMAGE)
+
+                except Exception:
                     pass
 
-            try:
-                context.close()
-            except:
-                pass
+            browser.close()
 
-            try:
-                browser.close()
-            except:
-                pass
+    print("=" * 60)
+    print("SYNC COMPLETED")
+    print("=" * 60)
 
-    print(
-        "=" * 60,
-        flush=True
-    )
-
-    print(
-        "SYNC COMPLETED",
-        flush=True
-    )
-
-    print(
-        "=" * 60,
-        flush=True
-    )
-
-
-# ============================================================
-# RUN
-# ============================================================
 
 if __name__ == "__main__":
     main()
+
