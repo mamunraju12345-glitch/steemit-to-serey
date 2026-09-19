@@ -76,6 +76,7 @@ def steem_rpc(method, params):
             data = response.json()
 
             if "error" in data:
+
                 raise RuntimeError(
                     str(data["error"])
                 )
@@ -917,13 +918,10 @@ def find_title_box(page):
     selectors = [
         'textarea[placeholder="Enter title..."]',
         'input[placeholder="Enter title..."]',
-
         'textarea[placeholder*="Enter title" i]',
         'input[placeholder*="Enter title" i]',
-
         'textarea[name="title"]',
         'input[name="title"]',
-
         'textarea[aria-label*="title" i]',
         'input[aria-label*="title" i]',
     ]
@@ -1121,49 +1119,273 @@ def upload_thumbnail(
 
 
 # ============================================================
-# BODY IMAGE INPUT
+# BODY IMAGE INPUT - DIAGNOSTIC VERSION
 # ============================================================
 
 def find_body_image_input(page):
+
+    print()
+    print(
+        "Searching for Serey image upload input..."
+    )
 
     inputs = get_file_inputs(
         page
     )
 
+    print()
     print(
-        f"Total file inputs: "
+        f"Total file inputs detected: "
         f"{len(inputs)}"
     )
 
-    if len(inputs) < 2:
+    for item in inputs:
 
         print(
-            "✗ Separate body image "
-            "input not found."
+            f"File input {item['index']}: "
+            f"accept={item['accept']} "
+            f"name={item['name']} "
+            f"multiple={item['multiple']}"
+        )
+
+    # --------------------------------------------------------
+    # TWO OR MORE INPUTS
+    # --------------------------------------------------------
+
+    if len(inputs) >= 2:
+
+        body_input = inputs[1]
+
+        print()
+        print(
+            "✓ Using second file input "
+            "as body image input."
+        )
+
+        print(
+            f"accept={body_input['accept']}"
+        )
+
+        print(
+            f"name={body_input['name']}"
+        )
+
+        print(
+            f"multiple={body_input['multiple']}"
+        )
+
+        return body_input["locator"]
+
+    # --------------------------------------------------------
+    # ONE INPUT
+    # --------------------------------------------------------
+
+    if len(inputs) == 1:
+
+        only_input = inputs[0]
+
+        print()
+        print(
+            "⚠ ONLY ONE FILE INPUT EXISTS."
+        )
+
+        print(
+            "Inspecting current Serey HTML..."
+        )
+
+        print()
+        print(
+            f"accept={only_input['accept']}"
+        )
+
+        print(
+            f"name={only_input['name']}"
+        )
+
+        print(
+            f"multiple={only_input['multiple']}"
+        )
+
+        try:
+
+            info = only_input.evaluate("""
+                (el) => ({
+                    outerHTML: el.outerHTML,
+                    parentHTML: el.parentElement
+                        ? el.parentElement.outerHTML
+                        : "",
+                    parentText: el.parentElement
+                        ? el.parentElement.innerText
+                        : ""
+                })
+            """)
+
+            print()
+            print(
+                "========== FILE INPUT HTML =========="
+            )
+
+            print(
+                info["outerHTML"][:5000]
+            )
+
+            print()
+            print(
+                "========== PARENT HTML =========="
+            )
+
+            print(
+                info["parentHTML"][:8000]
+            )
+
+            print()
+            print(
+                "========== PARENT TEXT =========="
+            )
+
+            print(
+                info["parentText"][:2000]
+            )
+
+        except Exception as e:
+
+            print(
+                f"Could not inspect "
+                f"file input: {e}"
+            )
+
+        # ----------------------------------------------------
+        # Check labels associated with the input
+        # ----------------------------------------------------
+
+        try:
+
+            input_id = only_input.get_attribute(
+                "id"
+            )
+
+            print()
+            print(
+                f"Input ID: {input_id}"
+            )
+
+            if input_id:
+
+                labels = page.locator(
+                    f'label[for="{input_id}"]'
+                )
+
+                print(
+                    f"Associated labels: "
+                    f"{labels.count()}"
+                )
+
+                for i in range(
+                    labels.count()
+                ):
+
+                    try:
+
+                        print(
+                            labels.nth(i).inner_text()
+                        )
+
+                    except Exception:
+                        pass
+
+        except Exception:
+            pass
+
+        print()
+        print(
+            "Body image uploader could not "
+            "yet be identified."
         )
 
         return None
 
-    body_input = inputs[1]
+    # --------------------------------------------------------
+    # ZERO INPUTS
+    # --------------------------------------------------------
 
+    print()
     print(
-        "✓ Body image input found: "
-        "file input 1"
+        "✗ No input[type=file] exists "
+        "on the current page."
     )
 
-    print(
-        f"  accept={body_input['accept']}"
-    )
+    # --------------------------------------------------------
+    # Inspect buttons
+    # --------------------------------------------------------
 
-    print(
-        f"  name={body_input['name']}"
-    )
+    try:
 
-    print(
-        f"  multiple={body_input['multiple']}"
-    )
+        buttons = page.locator(
+            "button"
+        )
 
-    return body_input["locator"]
+        print()
+        print(
+            f"Total buttons: "
+            f"{buttons.count()}"
+        )
+
+        for i in range(
+            min(buttons.count(), 100)
+        ):
+
+            button = buttons.nth(i)
+
+            try:
+
+                if not button.is_visible():
+                    continue
+
+                text = (
+                    button.inner_text()
+                    .strip()
+                )
+
+                aria = button.get_attribute(
+                    "aria-label"
+                )
+
+                title = button.get_attribute(
+                    "title"
+                )
+
+                data_tooltip = (
+                    button.get_attribute(
+                        "data-tooltip"
+                    )
+                )
+
+                if (
+                    text
+                    or aria
+                    or title
+                    or data_tooltip
+                ):
+
+                    print(
+                        f"Button {i}: "
+                        f"text={text!r} "
+                        f"aria={aria!r} "
+                        f"title={title!r} "
+                        f"tooltip={data_tooltip!r}"
+                    )
+
+            except Exception:
+                continue
+
+    except Exception as e:
+
+        print(
+            f"Could not inspect buttons: "
+            f"{e}"
+        )
+
+    return None
 
 
 # ============================================================
@@ -1273,7 +1495,7 @@ def upload_body_image(
 
         print(
             "✓ Body image selected "
-            "using file input 1"
+            "using detected file input."
         )
 
     except Exception as e:
@@ -1283,7 +1505,11 @@ def upload_body_image(
             f"image: {e}"
         )
 
-    for _ in range(15):
+    # --------------------------------------------------------
+    # Wait for image insertion
+    # --------------------------------------------------------
+
+    for second in range(20):
 
         time.sleep(1)
 
@@ -1304,25 +1530,31 @@ def upload_body_image(
 
             return True
 
-    after_html = (
-        get_editor_html(
-            editor
+        after_html = (
+            get_editor_html(
+                editor
+            )
         )
-    )
 
-    if (
-        after_html != before_html
-        and
-        "<img" in after_html.lower()
-    ):
+        if (
+            after_html != before_html
+            and
+            "<img" in after_html.lower()
+        ):
+
+            print(
+                "✓ Body image inserted "
+                "into editor HTML."
+            )
+
+            return True
 
         print(
-            "✓ Body image inserted "
-            "into editor HTML."
+            f"Waiting for image insertion..."
+            f" {second + 1}/20"
         )
 
-        return True
-
+    print()
     print(
         "✗ Body image upload was "
         "not verified."
@@ -1337,6 +1569,20 @@ def upload_body_image(
         f"Images after: "
         f"{editor_image_count(editor)}"
     )
+
+    print()
+    print(
+        "Current editor HTML:"
+    )
+
+    try:
+
+        print(
+            get_editor_html(editor)[:10000]
+        )
+
+    except Exception:
+        pass
 
     raise RuntimeError(
         "Serey body image upload "
