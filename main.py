@@ -27,8 +27,6 @@ SYNC_FILE = "synced_posts.json"
 TEMP_IMAGE_PREFIX = "temp_image"
 
 POSTS_PER_RUN = 1
-
-# কত দিন আগের পোস্ট থেকে শুরু করবে (১ বছর = ৩৬৫ দিন)
 DAYS_LIMIT = 365
 
 STEEM_NODES = [
@@ -123,9 +121,7 @@ def extract_thumbnail_and_body(body, metadata):
         if m:
             thumbnail = m.group(1)
 
-    # Clean excessive empty lines (Keep all text and image markdown intact)
     body = re.sub(r'\n{4,}', '\n\n', body)
-
     return body.strip(), thumbnail
 
 
@@ -171,7 +167,6 @@ def get_posts():
             break
 
         for p in batch:
-            # Skip reblogs (only author's own posts)
             if p.get("author") != STEEM_USERNAME:
                 continue
 
@@ -187,7 +182,6 @@ def get_posts():
             created_str = p.get("created", "")
             created_dt = parse_steem_date(created_str)
 
-            # Check 1-year cutoff
             if created_dt and created_dt < cutoff_date:
                 reached_older_than_limit = True
                 break
@@ -223,7 +217,6 @@ def get_posts():
 
         time.sleep(0.3)
 
-    # Reverse list: ১ বছর আগের পুরোনো পোস্ট আগে থাকবে, নতুন পোস্ট পরে আসবে
     posts.reverse()
     print(f"Total posts collected from the last {DAYS_LIMIT} days: {len(posts)}", flush=True)
     return posts
@@ -255,11 +248,11 @@ def download_image(url):
         with open(file_path, "wb") as f:
             f.write(r.content)
 
-        print(f"✓ Cover image downloaded: {file_path}", flush=True)
+        print(f"✓ Cover image saved: {file_path}", flush=True)
         return file_path
 
     except Exception as e:
-        print(f"❌ Cover image download error: {e}", flush=True)
+        print(f"❌ Cover image download failed: {e}", flush=True)
         return None
 
 
@@ -295,34 +288,37 @@ def login(page):
 
 
 # ============================================================
-# VERIFY URL & PUBLICATION
+# VERIFY (TARGETS: /authors/<username>/<post-id>)
 # ============================================================
 
 def verify(page, title):
     print("VERIFYING PUBLISHED POST...", flush=True)
 
-    for _ in range(8):
+    author_slug = SEREY_LOGIN.lower()
+
+    for step in range(10):
         page.wait_for_timeout(4000)
         url = page.url
-        print(f"Current URL: {url}", flush=True)
+        print(f"Check {step+1}/10 - Current URL: {url}", flush=True)
 
-        # চেক করবে URL-এ /authors/ এবং ইউজারনেম/পোস্ট আইডি আছে কিনা
-        if "/authors/" in url and "/blog/post/new" not in url:
-            print(f"✓ SUCCESS: POST PUBLISHED! Final URL: {url}", flush=True)
+        # ১. URL চেক: /authors/ এর পর ইউজারনেম এবং পোস্ট আইডি এসেছে কিনা
+        if f"/authors/{author_slug}" in url.lower() or (f"/authors/" in url and "/blog/post/new" not in url):
+            print(f"✓ SUCCESS: POST PUBLISHED AND REDIRECTED TO AUTHOR POST URL: {url}", flush=True)
             return True
 
+        # ২. সাকসেস নোটিফিকেশন চেক
         try:
             if page.locator('text="Successfully posted your article"').is_visible():
-                print("✓ SUCCESS MESSAGE DETECTED!", flush=True)
+                print("✓ SUCCESS MESSAGE DETECTED ON SCREEN!", flush=True)
                 return True
         except:
             pass
 
-    # পেজে কোনো এরর মেসেজ থাকলে তা প্রিন্ট করা
+    # কোনো এরর থাকলে লগ প্রিন্ট করা
     try:
         errors = page.locator('.ant-message-error, .ant-form-item-explain-error, .error').all_inner_texts()
         if errors:
-            print(f"⚠️ Page Errors: {errors}", flush=True)
+            print(f"⚠️ Form Alert Errors: {errors}", flush=True)
     except:
         pass
 
@@ -341,7 +337,7 @@ def publish(page, post):
     page.goto(NEW_POST, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(5000)
 
-    # 1. TITLE (Strictly ignores Quill formula inputs)
+    # 1. TITLE
     title_box = page.locator(
         'input[placeholder*="title" i], textarea[placeholder*="title" i], input[placeholder*="Enter title" i]'
     ).first
@@ -350,7 +346,7 @@ def publish(page, post):
     print("✓ Title filled", flush=True)
     page.wait_for_timeout(1000)
 
-    # 2. BODY (Keeps all original images and text intact)
+    # 2. BODY
     editor = page.locator('.ql-editor, div[contenteditable="true"]').first
     editor.click(force=True)
     page.wait_for_timeout(500)
@@ -361,14 +357,14 @@ def publish(page, post):
     print("✓ Body filled (with all post images)", flush=True)
     page.wait_for_timeout(2000)
 
-    # 3. THUMBNAIL (First image as cover)
+    # 3. THUMBNAIL (COVER PHOTO)
     downloaded_img = download_image(post.get("thumbnail"))
     if downloaded_img:
         try:
             file_input = page.locator('input[type="file"]').first
             file_input.set_input_files(downloaded_img)
-            print("✓ Cover Thumbnail uploaded! Waiting for Serey upload...", flush=True)
-            page.wait_for_timeout(7000)
+            print("✓ Thumbnail set, waiting 10s for Serey server upload...", flush=True)
+            page.wait_for_timeout(10000)
         except Exception as e:
             print(f"❌ Thumbnail upload failed: {e}")
 
@@ -380,41 +376,45 @@ def publish(page, post):
 
     page.wait_for_timeout(4000)
 
-    # 5. MODAL & AUTO-CATEGORY HANDLING
+    # 5. MODAL DETECTION & MANDATORY CATEGORY SELECTION
     modal = page.locator('div[role="dialog"], .ant-modal-content, .modal-content').last
     try:
-        modal.wait_for(state="visible", timeout=7000)
-        print("✓ Modal detected!", flush=True)
+        modal.wait_for(state="visible", timeout=10000)
+        print("✓ Modal detected successfully!", flush=True)
     except Exception:
         print("Modal wait continuing...", flush=True)
 
-    # Ensure Category is selected in modal
+    # ক্যাটাগরি নিশ্চিতভাবে নির্বাচন করা
     try:
-        select_boxes = modal.locator('.ant-select, .ant-select-selector, [role="combobox"]')
-        if select_boxes.count() > 0:
-            select_boxes.first.click(force=True)
-            page.wait_for_timeout(1200)
+        select_boxes = modal.locator('.ant-select-selector, .ant-select, [role="combobox"]')
+        total_selects = select_boxes.count()
+        print(f"Found {total_selects} category dropdown(s) in modal.", flush=True)
 
+        if total_selects > 0:
+            select_boxes.first.click(force=True)
+            page.wait_for_timeout(1500)
+
+            # ড্রপডাউন অপশন থেকে প্রথম ক্যাটাগরি ক্লিক করা
             options = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) [role="option"], .ant-select-item-option')
             if options.count() > 0:
                 opt_txt = options.first.inner_text().strip()
                 options.first.click(force=True)
-                print(f"✓ Category selected: {opt_txt}", flush=True)
+                print(f"✓ Category selected in modal: {opt_txt}", flush=True)
                 page.wait_for_timeout(1000)
 
-        # Subcategory selection if present
-        if select_boxes.count() > 1:
+        # সাব-ক্যাটাগরি থাকলে সিলেক্ট করা
+        if total_selects > 1:
             select_boxes.nth(1).click(force=True)
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(1500)
             sub_opts = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) [role="option"], .ant-select-item-option')
             if sub_opts.count() > 0:
                 sub_opts.first.click(force=True)
-                print("✓ Subcategory selected", flush=True)
+                print("✓ Subcategory selected in modal.", flush=True)
                 page.wait_for_timeout(1000)
     except Exception as e:
-        print(f"Category selection note: {e}", flush=True)
+        print(f"Category selection log: {e}", flush=True)
 
-    # 6. FINAL PUBLISH BUTTON
+    # 6. FINAL PUBLISH BUTTON (INSIDE MODAL)
     print("Clicking final Modal Publish button...", flush=True)
     modal_button = modal.locator(
         'button:has-text("Publish"), '
@@ -423,18 +423,17 @@ def publish(page, post):
         'button:has-text("Submit")'
     ).last
 
-    # Wait until button is enabled
-    for _ in range(6):
+    # বাটন সক্রিয় (Enabled) হওয়া পর্যন্ত অপেক্ষা
+    for _ in range(8):
         if modal_button.is_enabled():
             break
         page.wait_for_timeout(1000)
 
     modal_button.click(force=True)
-    print("✓ FINAL PUBLISH CLICKED!", flush=True)
+    print("✓ FINAL MODAL PUBLISH CLICKED!", flush=True)
 
-    page.wait_for_timeout(10000)
+    page.wait_for_timeout(12000)
 
-    # Clean up local thumbnail file
     if downloaded_img and os.path.exists(downloaded_img):
         try:
             os.remove(downloaded_img)
@@ -454,7 +453,7 @@ def main():
     print("=" * 60)
 
     if not STEEM_USERNAME or not SEREY_LOGIN or not SEREY_PASSWORD:
-        print("❌ Error: Missing Environment Secrets (STEEM_USERNAME, SEREY_LOGIN, SEREY_PASSWORD)!")
+        print("❌ Error: Missing Environment Secrets!")
         return
 
     synced = load_synced()
