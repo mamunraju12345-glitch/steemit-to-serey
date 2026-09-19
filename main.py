@@ -23,12 +23,10 @@ SEREY_LOGIN = os.environ.get(
 
 SEREY_PASSWORD = os.environ["SEREY_PASSWORD"].strip()
 
-# Login / writing may use bengali.serey.io
 SEREY = "https://bengali.serey.io"
 
 NEW_POST = f"{SEREY}/write/new"
 
-# Published URL can be serey.io
 PUBLISHED_HOSTS = {
     "serey.io",
     "www.serey.io",
@@ -37,8 +35,10 @@ PUBLISHED_HOSTS = {
 
 SYNC_FILE = "synced_posts.json"
 
+# প্রতি GitHub Actions run-এ 1টি post
 POSTS_PER_RUN = 1
 
+# গত 365 দিনের post
 DAYS_TO_SYNC = 365
 
 REQUEST_TIMEOUT = 30
@@ -119,6 +119,7 @@ def steem_rpc(method, params):
 def load_synced():
 
     if not os.path.exists(SYNC_FILE):
+
         return set()
 
     try:
@@ -132,9 +133,11 @@ def load_synced():
             data = json.load(f)
 
         if isinstance(data, list):
+
             return set(data)
 
         if isinstance(data, dict):
+
             return set(data.keys())
 
     except Exception as e:
@@ -190,16 +193,21 @@ def extract_images_from_body(body):
     images = []
 
     if not body:
+
         return images
 
+    # Markdown images
     for url in IMAGE_MARKDOWN_RE.findall(body):
 
         if url not in images:
+
             images.append(url)
 
+    # HTML images
     for url in HTML_IMAGE_RE.findall(body):
 
         if url not in images:
+
             images.append(url)
 
     return images
@@ -232,7 +240,10 @@ def get_first_image(post):
 
         return body_images[0]
 
+    # --------------------------------------------------------
     # Metadata fallback
+    # --------------------------------------------------------
+
     try:
 
         metadata_raw = post.get(
@@ -318,11 +329,15 @@ def get_first_image(post):
 def clean_article(body):
 
     if not body:
+
         return ""
 
     text = body
 
+    # --------------------------------------------------------
     # HTML comments
+    # --------------------------------------------------------
+
     text = re.sub(
         r'<!--.*?-->',
         '',
@@ -330,19 +345,28 @@ def clean_article(body):
         flags=re.DOTALL
     )
 
+    # --------------------------------------------------------
     # Remove Markdown images
+    # --------------------------------------------------------
+
     text = IMAGE_MARKDOWN_RE.sub(
         '',
         text
     )
 
+    # --------------------------------------------------------
     # Remove HTML images
+    # --------------------------------------------------------
+
     text = HTML_IMAGE_RE.sub(
         '',
         text
     )
 
+    # --------------------------------------------------------
     # Remove div
+    # --------------------------------------------------------
+
     text = re.sub(
         r'</?div\b[^>]*>',
         '',
@@ -350,7 +374,10 @@ def clean_article(body):
         flags=re.IGNORECASE
     )
 
+    # --------------------------------------------------------
     # Remove paragraph tags
+    # --------------------------------------------------------
+
     text = re.sub(
         r'</?p\b[^>]*>',
         '',
@@ -358,7 +385,10 @@ def clean_article(body):
         flags=re.IGNORECASE
     )
 
+    # --------------------------------------------------------
     # Remove span
+    # --------------------------------------------------------
+
     text = re.sub(
         r'</?span\b[^>]*>',
         '',
@@ -366,7 +396,10 @@ def clean_article(body):
         flags=re.IGNORECASE
     )
 
+    # --------------------------------------------------------
     # Remove center
+    # --------------------------------------------------------
+
     text = re.sub(
         r'</?center\b[^>]*>',
         '',
@@ -374,7 +407,10 @@ def clean_article(body):
         flags=re.IGNORECASE
     )
 
+    # --------------------------------------------------------
     # BR -> newline
+    # --------------------------------------------------------
+
     text = re.sub(
         r'<br\s*/?>',
         '\n',
@@ -382,7 +418,10 @@ def clean_article(body):
         flags=re.IGNORECASE
     )
 
+    # --------------------------------------------------------
     # HTML links -> visible text
+    # --------------------------------------------------------
+
     text = re.sub(
         r'<a\b[^>]*>(.*?)</a>',
         r'\1',
@@ -390,21 +429,30 @@ def clean_article(body):
         flags=re.IGNORECASE | re.DOTALL
     )
 
+    # --------------------------------------------------------
     # Remove remaining HTML
+    # --------------------------------------------------------
+
     text = re.sub(
         r'<[^>]+>',
         '',
         text
     )
 
+    # --------------------------------------------------------
     # Markdown links -> visible text
+    # --------------------------------------------------------
+
     text = re.sub(
         r'\[([^\]]+)\]\(\s*https?://[^)\s]+[^)]*\)',
         r'\1',
         text
     )
 
+    # --------------------------------------------------------
     # Markdown headings
+    # --------------------------------------------------------
+
     text = re.sub(
         r'^\s{0,3}#{1,6}\s*',
         '',
@@ -412,7 +460,10 @@ def clean_article(body):
         flags=re.MULTILINE
     )
 
+    # --------------------------------------------------------
     # Bold / italic
+    # --------------------------------------------------------
+
     text = re.sub(
         r'\*\*\*(.*?)\*\*\*',
         r'\1',
@@ -446,7 +497,10 @@ def clean_article(body):
         text
     )
 
+    # --------------------------------------------------------
     # Horizontal rules
+    # --------------------------------------------------------
+
     text = re.sub(
         r'^\s*([-*_])(?:\s*\1){2,}\s*$',
         '',
@@ -454,7 +508,10 @@ def clean_article(body):
         flags=re.MULTILINE
     )
 
+    # --------------------------------------------------------
     # Excessive blank lines
+    # --------------------------------------------------------
+
     text = re.sub(
         r'\n[ \t]+\n',
         '\n\n',
@@ -467,7 +524,10 @@ def clean_article(body):
         text
     )
 
-    # Trim every line
+    # --------------------------------------------------------
+    # Trim lines
+    # --------------------------------------------------------
+
     lines = []
 
     for line in text.splitlines():
@@ -495,18 +555,22 @@ def detect_extension(url, response):
     )
 
     if "png" in content_type:
+
         return ".png"
 
     if "webp" in content_type:
+
         return ".webp"
 
     if "gif" in content_type:
+
         return ".gif"
 
     if (
         "jpeg" in content_type
         or "jpg" in content_type
     ):
+
         return ".jpg"
 
     path = url.lower().split("?")[0]
@@ -520,6 +584,7 @@ def detect_extension(url, response):
     ]:
 
         if path.endswith(ext):
+
             return ext
 
     return ".jpg"
@@ -573,6 +638,7 @@ def download_image(
             ):
 
                 if not chunk:
+
                     continue
 
                 total += len(chunk)
@@ -580,8 +646,11 @@ def download_image(
                 if total > MAX_IMAGE_SIZE:
 
                     try:
+
                         path.unlink()
+
                     except Exception:
+
                         pass
 
                     print(
@@ -675,9 +744,11 @@ def debug_page(
                 )
 
             except Exception:
+
                 pass
 
     except Exception:
+
         pass
 
     try:
@@ -800,9 +871,11 @@ def login(page):
                     break
 
             if username_box:
+
                 break
 
         except Exception:
+
             pass
 
     for selector in password_selectors:
@@ -829,9 +902,11 @@ def login(page):
                     break
 
             if password_box:
+
                 break
 
         except Exception:
+
             pass
 
     if not username_box or not password_box:
@@ -887,9 +962,11 @@ def login(page):
                     break
 
             if login_button:
+
                 break
 
         except Exception:
+
             pass
 
     if not login_button:
@@ -927,7 +1004,7 @@ def login(page):
 
 
 # ============================================================
-# TITLE
+# FIND TITLE
 # ============================================================
 
 def find_title_box(page):
@@ -991,6 +1068,7 @@ def find_title_box(page):
                         return item
 
             except Exception:
+
                 pass
 
         time.sleep(0.5)
@@ -1008,7 +1086,7 @@ def find_title_box(page):
 
 
 # ============================================================
-# EDITOR
+# FIND EDITOR
 # ============================================================
 
 def find_editor(page):
@@ -1055,6 +1133,7 @@ def find_editor(page):
                         return item
 
             except Exception:
+
                 pass
 
         time.sleep(0.5)
@@ -1072,7 +1151,7 @@ def find_editor(page):
 
 
 # ============================================================
-# THUMBNAIL BUTTON
+# FIND THUMBNAIL BUTTONS
 # ============================================================
 
 def find_thumbnail_buttons(page):
@@ -1094,6 +1173,7 @@ def find_thumbnail_buttons(page):
                 button = buttons.nth(i)
 
                 if not button.is_visible():
+
                     continue
 
                 aria = (
@@ -1117,6 +1197,7 @@ def find_thumbnail_buttons(page):
                     ).strip().lower()
 
                 except Exception:
+
                     pass
 
                 combined = " ".join([
@@ -1140,9 +1221,11 @@ def find_thumbnail_buttons(page):
                     )
 
             except Exception:
+
                 pass
 
     except Exception:
+
         pass
 
     return result
@@ -1240,7 +1323,7 @@ def upload_thumbnail(
     )
 
     # --------------------------------------------------------
-    # Dedicated thumbnail / cover button
+    # Dedicated thumbnail button
     # --------------------------------------------------------
 
     buttons = find_thumbnail_buttons(
@@ -1287,7 +1370,7 @@ def upload_thumbnail(
             )
 
     # --------------------------------------------------------
-    # Direct input
+    # Direct thumbnail input
     # --------------------------------------------------------
 
     inputs = get_file_inputs(
@@ -1338,6 +1421,7 @@ def upload_thumbnail(
                 )
 
         except Exception:
+
             pass
 
     if thumbnail_inputs:
@@ -1420,7 +1504,7 @@ def upload_thumbnail(
 
 
 # ============================================================
-# TYPE ARTICLE
+# TYPE CLEAN ARTICLE
 # ============================================================
 
 def type_article(
@@ -1486,6 +1570,7 @@ def find_publish_button(page):
                     return button
 
         except Exception:
+
             pass
 
     return None
@@ -1509,14 +1594,14 @@ def is_published_post_url(url):
             parsed.path or ""
         ).lower()
 
-        # Example:
-        # /authors/mamun/9xl6x0p71a...
         if hostname not in PUBLISHED_HOSTS:
+
             return False
 
         if not path.startswith(
             "/authors/"
         ):
+
             return False
 
         parts = [
@@ -1525,18 +1610,21 @@ def is_published_post_url(url):
             if x
         ]
 
-        # Expected:
         # authors / username / post-id
         if len(parts) < 3:
+
             return False
 
         if parts[0] != "authors":
+
             return False
 
         if not parts[1]:
+
             return False
 
         if not parts[2]:
+
             return False
 
         return True
@@ -1568,10 +1656,13 @@ def verify_published_page(
         "=" * 60
     )
 
-    # Give Serey time to redirect
     deadline = time.time() + 30
 
     published_url = None
+
+    # --------------------------------------------------------
+    # Wait for real Serey URL
+    # --------------------------------------------------------
 
     while time.time() < deadline:
 
@@ -1621,7 +1712,7 @@ def verify_published_page(
         return False, None
 
     # --------------------------------------------------------
-    # Load / verify published page
+    # Open published page
     # --------------------------------------------------------
 
     try:
@@ -1648,8 +1739,7 @@ def verify_published_page(
             f"published page: {e}"
         )
 
-        # URL itself was valid.
-        # Continue with URL verification.
+        # URL already matched expected format.
         return True, published_url
 
     final_url = page.url
@@ -1671,8 +1761,10 @@ def verify_published_page(
         return False, None
 
     # --------------------------------------------------------
-    # Check page title/content
+    # Check visible page content
     # --------------------------------------------------------
+
+    body_text = ""
 
     try:
 
@@ -1704,35 +1796,27 @@ def verify_published_page(
         )
 
     # --------------------------------------------------------
-    # Check expected title
+    # Check title
     # --------------------------------------------------------
 
-    if expected_title:
+    if expected_title and body_text:
 
-        try:
+        if (
+            expected_title.lower()
+            in body_text.lower()
+        ):
 
-            title_found = (
-                expected_title.lower()
-                in body_text.lower()
+            print(
+                "✓ Published title confirmed."
             )
 
-            if title_found:
+        else:
 
-                print(
-                    "✓ Published title "
-                    "confirmed."
-                )
-
-            else:
-
-                print(
-                    "⚠ Expected title was "
-                    "not found in visible "
-                    "page text."
-                )
-
-        except Exception:
-            pass
+            print(
+                "⚠ Expected title was "
+                "not found in visible "
+                "page text."
+            )
 
     print()
     print(
@@ -1883,7 +1967,7 @@ def publish_post(
         )
 
     # --------------------------------------------------------
-    # First image only
+    # Thumbnail
     # --------------------------------------------------------
 
     thumbnail_path = None
@@ -1909,7 +1993,7 @@ def publish_post(
         )
 
     # --------------------------------------------------------
-    # Clean article only
+    # Insert clean article
     # --------------------------------------------------------
 
     type_article(
@@ -1923,7 +2007,7 @@ def publish_post(
     )
 
     # --------------------------------------------------------
-    # Publish button
+    # Publish
     # --------------------------------------------------------
 
     publish_button = find_publish_button(
@@ -1954,6 +2038,7 @@ def publish_post(
         publish_button.scroll_into_view_if_needed()
 
     except Exception:
+
         pass
 
     page.wait_for_timeout(
@@ -1983,8 +2068,7 @@ def publish_post(
     )
 
     # --------------------------------------------------------
-    # IMPORTANT:
-    # Verify real published URL
+    # REAL URL VERIFICATION
     # --------------------------------------------------------
 
     verified, published_url = (
@@ -2039,6 +2123,7 @@ def cleanup_images():
         ):
 
             if path in removed:
+
                 continue
 
             try:
@@ -2061,18 +2146,19 @@ def cleanup_images():
 
 
 # ============================================================
-# GET STEEM POSTS
+# GET POSTS
 # ============================================================
 
 def get_posts():
 
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # cutoff is UTC-aware
+    # --------------------------------------------------------
+
     cutoff = (
-        datetime.now(
-            timezone.utc
-        )
-        - timedelta(
-            days=DAYS_TO_SYNC
-        )
+        datetime.now(timezone.utc)
+        - timedelta(days=DAYS_TO_SYNC)
     )
 
     all_posts = []
@@ -2113,6 +2199,7 @@ def get_posts():
             break
 
         if not posts:
+
             break
 
         print(
@@ -2125,6 +2212,10 @@ def get_posts():
 
         for post in posts:
 
+            # ------------------------------------------------
+            # Only our own posts
+            # ------------------------------------------------
+
             if post.get(
                 "author"
             ) != STEEM_USERNAME:
@@ -2135,18 +2226,83 @@ def get_posts():
                 "created"
             )
 
-            try:
-
-                created = datetime.fromisoformat(
-                    created_string.replace(
-                        "Z",
-                        "+00:00"
-                    )
-                )
-
-            except Exception:
+            if not created_string:
 
                 continue
+
+            # ------------------------------------------------
+            # SAFE DATETIME PARSING
+            # ------------------------------------------------
+
+            try:
+
+                created_string = str(
+                    created_string
+                ).strip()
+
+                # Example:
+                # 2026-09-19T11:40:42
+                #
+                # Steem timestamps are UTC.
+                # If no timezone exists,
+                # explicitly attach UTC.
+
+                if created_string.endswith(
+                    "Z"
+                ):
+
+                    created = datetime.fromisoformat(
+                        created_string.replace(
+                            "Z",
+                            "+00:00"
+                        )
+                    )
+
+                elif "+" in created_string[10:]:
+
+                    # Already timezone-aware
+                    created = datetime.fromisoformat(
+                        created_string
+                    )
+
+                else:
+
+                    # Naive Steem timestamp
+                    # -> treat as UTC
+                    created = datetime.fromisoformat(
+                        created_string
+                    ).replace(
+                        tzinfo=timezone.utc
+                    )
+
+            except Exception as e:
+
+                print(
+                    f"⚠ Could not parse post date "
+                    f"{created_string}: {e}"
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # Ensure UTC-aware
+            # ------------------------------------------------
+
+            if created.tzinfo is None:
+
+                created = created.replace(
+                    tzinfo=timezone.utc
+                )
+
+            else:
+
+                created = created.astimezone(
+                    timezone.utc
+                )
+
+            # ------------------------------------------------
+            # Compare safely
+            # ------------------------------------------------
 
             if created < cutoff:
 
@@ -2154,19 +2310,35 @@ def get_posts():
 
                 continue
 
+            # ------------------------------------------------
+            # Save normalized datetime
+            # ------------------------------------------------
+
             post["_created_dt"] = created
 
             all_posts.append(
                 post
             )
 
+        # ----------------------------------------------------
+        # Stop when 365-day cutoff reached
+        # ----------------------------------------------------
+
         if reached_cutoff:
 
             break
 
+        # ----------------------------------------------------
+        # Last page
+        # ----------------------------------------------------
+
         if len(posts) < 100:
 
             break
+
+        # ----------------------------------------------------
+        # Pagination
+        # ----------------------------------------------------
 
         last = posts[-1]
 
@@ -2182,7 +2354,15 @@ def get_posts():
 
         if page_number > 100:
 
+            print(
+                "⚠ Pagination safety limit reached."
+            )
+
             break
+
+    # --------------------------------------------------------
+    # Oldest -> newest
+    # --------------------------------------------------------
 
     all_posts.sort(
         key=lambda x: x["_created_dt"]
@@ -2231,8 +2411,16 @@ def main():
     )
 
     print(
+        "• Date handling = UTC SAFE"
+    )
+
+    print(
         "=" * 60
     )
+
+    # --------------------------------------------------------
+    # Load synced
+    # --------------------------------------------------------
 
     synced = load_synced()
 
@@ -2240,6 +2428,10 @@ def main():
         f"Previously synced: "
         f"{len(synced)}"
     )
+
+    # --------------------------------------------------------
+    # Get Steem posts
+    # --------------------------------------------------------
 
     posts = get_posts()
 
@@ -2272,6 +2464,10 @@ def main():
         f"{posts[-1].get('permlink')}"
     )
 
+    # --------------------------------------------------------
+    # Find unsynced
+    # --------------------------------------------------------
+
     unsynced = []
 
     for post in posts:
@@ -2299,6 +2495,10 @@ def main():
         )
 
         return
+
+    # --------------------------------------------------------
+    # Select oldest unsynced post
+    # --------------------------------------------------------
 
     selected = unsynced[
         :POSTS_PER_RUN
@@ -2337,6 +2537,10 @@ def main():
             "-" * 60
         )
 
+    # --------------------------------------------------------
+    # Playwright
+    # --------------------------------------------------------
+
     with sync_playwright() as p:
 
         browser = p.chromium.launch(
@@ -2355,11 +2559,19 @@ def main():
 
         try:
 
+            # ------------------------------------------------
+            # Login
+            # ------------------------------------------------
+
             if not login(page):
 
                 raise RuntimeError(
                     "Serey login failed."
                 )
+
+            # ------------------------------------------------
+            # Process selected posts
+            # ------------------------------------------------
 
             for post in selected:
 
@@ -2392,49 +2604,46 @@ def main():
                         post
                     )
 
-                    # ------------------------------------------------
-                    # VERY IMPORTANT
-                    # Only save after URL verification succeeds
-                    # ------------------------------------------------
+                    # ----------------------------------------
+                    # ONLY AFTER URL VERIFICATION
+                    # ----------------------------------------
 
-                    if published_url:
-
-                        synced.add(
-                            post_id
-                        )
-
-                        save_synced(
-                            synced
-                        )
-
-                        print()
-                        print(
-                            "✓✓✓ SUCCESSFULLY SYNCED ✓✓✓"
-                        )
-
-                        print(
-                            f"Steem post: "
-                            f"{post_id}"
-                        )
-
-                        print(
-                            "Serey published URL:"
-                        )
-
-                        print(
-                            published_url
-                        )
-
-                        print(
-                            f"Synced total: "
-                            f"{len(synced)}"
-                        )
-
-                    else:
+                    if not published_url:
 
                         raise RuntimeError(
                             "No published URL returned."
                         )
+
+                    synced.add(
+                        post_id
+                    )
+
+                    save_synced(
+                        synced
+                    )
+
+                    print()
+                    print(
+                        "✓✓✓ SUCCESSFULLY SYNCED ✓✓✓"
+                    )
+
+                    print(
+                        f"Steem post: "
+                        f"{post_id}"
+                    )
+
+                    print(
+                        "Serey published URL:"
+                    )
+
+                    print(
+                        published_url
+                    )
+
+                    print(
+                        f"Synced total: "
+                        f"{len(synced)}"
+                    )
 
                 except Exception as e:
 
@@ -2457,6 +2666,10 @@ def main():
 
         finally:
 
+            # ------------------------------------------------
+            # Cleanup
+            # ------------------------------------------------
+
             cleanup_images()
 
             try:
@@ -2464,6 +2677,7 @@ def main():
                 context.close()
 
             except Exception:
+
                 pass
 
             try:
@@ -2471,6 +2685,7 @@ def main():
                 browser.close()
 
             except Exception:
+
                 pass
 
     print()
