@@ -1,10 +1,9 @@
 import os
-import re
 import json
+import re
 import time
 import requests
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
@@ -21,33 +20,26 @@ SEREY_LOGIN = os.environ.get(
     os.environ.get("SEREY_USERNAME", "")
 ).replace("@", "").strip()
 
-SEREY_PASSWORD = os.environ["SEREY_PASSWORD"].strip()
+SEREY_PASSWORD = os.environ.get(
+    "SEREY_PASSWORD", ""
+).strip()
 
 SEREY = "https://bengali.serey.io"
 
 NEW_POST = f"{SEREY}/write/new"
 
-PUBLISHED_HOSTS = {
-    "serey.io",
-    "www.serey.io",
-    "bengali.serey.io",
-}
-
 SYNC_FILE = "synced_posts.json"
+TEMP_IMAGE = "steem_thumbnail.jpg"
 
 POSTS_PER_RUN = 1
-
 DAYS_TO_SYNC = 365
 
-REQUEST_TIMEOUT = 30
-
-MAX_IMAGE_SIZE = 30 * 1024 * 1024
 
 STEEM_NODES = [
     "https://api.steemit.com",
     "https://api.justyy.com",
     "https://api.moecki.online",
-    "https://api.steem.fans",
+    "https://steem.619.io",
 ]
 
 
@@ -55,59 +47,76 @@ STEEM_NODES = [
 # STEEM RPC
 # ============================================================
 
-def steem_rpc(method, params):
+def rpc(method, params):
 
     payload = {
         "jsonrpc": "2.0",
-        "id": 1,
         "method": method,
-        "params": params
+        "params": params,
+        "id": 1
     }
-
-    last_error = None
 
     for node in STEEM_NODES:
 
         try:
 
-            print(f"RPC: {node}")
+            print(f"RPC: {node}", flush=True)
 
             response = requests.post(
                 node,
                 json=payload,
-                timeout=REQUEST_TIMEOUT
+                timeout=30
             )
 
             response.raise_for_status()
 
             data = response.json()
 
-            if "result" in data:
-
-                print(
-                    f"✓ RPC success: {node}"
-                )
-
-                return data["result"]
+            if "error" in data:
+                raise Exception(data["error"])
 
             print(
-                f"✗ RPC error: {data}"
+                f"✓ RPC success: {node}",
+                flush=True
             )
+
+            return data["result"]
 
         except Exception as e:
 
-            last_error = e
-
             print(
-                f"✗ RPC failed: {node}"
+                f"RPC failed: {e}",
+                flush=True
             )
 
-            print(e)
+    raise Exception("All Steem RPC nodes failed")
 
-    raise RuntimeError(
-        f"All Steem RPC nodes failed. "
-        f"Last error: {last_error}"
-    )
+
+# ============================================================
+# DATE
+# ============================================================
+
+def parse_steem_date(value):
+
+    if not value:
+        return None
+
+    try:
+
+        value = value.strip()
+
+        dt = datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+        return dt.astimezone(timezone.utc)
+
+    except Exception:
+
+        return None
 
 
 # ============================================================
@@ -117,7 +126,6 @@ def steem_rpc(method, params):
 def load_synced():
 
     if not os.path.exists(SYNC_FILE):
-
         return set()
 
     try:
@@ -130,25 +138,27 @@ def load_synced():
 
             data = json.load(f)
 
-        if isinstance(data, list):
+            if isinstance(data, list):
+                return set(data)
 
-            return set(data)
+            if isinstance(data, dict):
 
-        if isinstance(data, dict):
+                if "synced" in data:
+                    return set(data["synced"])
 
-            return set(data.keys())
+                return set(data.keys())
 
     except Exception as e:
 
         print(
-            f"Warning: could not load "
-            f"{SYNC_FILE}: {e}"
+            f"Warning: synced file could not be loaded: {e}",
+            flush=True
         )
 
     return set()
 
 
-def save_synced(synced):
+def save_synced(data):
 
     with open(
         SYNC_FILE,
@@ -157,7 +167,7 @@ def save_synced(synced):
     ) as f:
 
         json.dump(
-            sorted(list(synced)),
+            sorted(data),
             f,
             ensure_ascii=False,
             indent=2
@@ -165,151 +175,58 @@ def save_synced(synced):
 
 
 # ============================================================
-# IMAGE REGEX
+# FIRST IMAGE
 # ============================================================
 
-IMAGE_MARKDOWN_RE = re.compile(
-    r'!\[[^\]]*\]\(\s*(https?://[^)\s]+)'
-    r'(?:\s+"[^"]*")?\s*\)',
-    re.IGNORECASE
-)
+def get_first_image(body, metadata):
 
-HTML_IMAGE_RE = re.compile(
-    r'<img\b[^>]*\bsrc\s*=\s*["\']'
-    r'(https?://[^"\']+)'
-    r'["\'][^>]*>',
-    re.IGNORECASE
-)
+    # --------------------------------------------------------
+    # Markdown image
+    # --------------------------------------------------------
 
-
-# ============================================================
-# EXTRACT IMAGES
-# ============================================================
-
-def extract_images_from_body(body):
-
-    images = []
-
-    if not body:
-
-        return images
-
-    for url in IMAGE_MARKDOWN_RE.findall(body):
-
-        if url not in images:
-
-            images.append(url)
-
-    for url in HTML_IMAGE_RE.findall(body):
-
-        if url not in images:
-
-            images.append(url)
-
-    return images
-
-
-# ============================================================
-# FIRST IMAGE = THUMBNAIL
-# ============================================================
-
-def get_first_image(post):
-
-    body = post.get(
-        "body",
-        ""
+    match = re.search(
+        r'!\[[^\]]*\]\(\s*(https?://[^)\s]+)',
+        body or "",
+        re.I
     )
 
-    body_images = extract_images_from_body(
-        body
+    if match:
+        return match.group(1).strip()
+
+    # --------------------------------------------------------
+    # HTML image
+    # --------------------------------------------------------
+
+    match = re.search(
+        r'<img[^>]+src=["\'](https?://[^"\']+)["\']',
+        body or "",
+        re.I
     )
 
-    if body_images:
+    if match:
+        return match.group(1).strip()
 
-        print(
-            "✓ First body image found:"
-        )
-
-        print(
-            body_images[0]
-        )
-
-        return body_images[0]
+    # --------------------------------------------------------
+    # Steem metadata
+    # --------------------------------------------------------
 
     try:
 
-        metadata_raw = post.get(
-            "json_metadata",
-            ""
-        )
+        meta = json.loads(metadata or "{}")
 
-        if isinstance(
-            metadata_raw,
-            str
-        ):
+        images = meta.get("image", [])
 
-            metadata = json.loads(
-                metadata_raw
-            )
+        if isinstance(images, list):
 
-        else:
+            for image in images:
 
-            metadata = metadata_raw
+                if isinstance(image, str) and image.startswith(
+                    "http"
+                ):
+                    return image
 
-        if isinstance(
-            metadata,
-            dict
-        ):
-
-            image_list = metadata.get(
-                "image",
-                []
-            )
-
-            if isinstance(
-                image_list,
-                str
-            ):
-
-                image_list = [
-                    image_list
-                ]
-
-            if isinstance(
-                image_list,
-                list
-            ):
-
-                for image in image_list:
-
-                    if (
-                        isinstance(
-                            image,
-                            str
-                        )
-                        and image.startswith(
-                            "http"
-                        )
-                    ):
-
-                        print(
-                            "✓ First metadata "
-                            "image found:"
-                        )
-
-                        print(image)
-
-                        return image
-
-    except Exception as e:
-
-        print(
-            f"Metadata image check failed: {e}"
-        )
-
-    print(
-        "⚠ No image found for thumbnail."
-    )
+    except Exception:
+        pass
 
     return None
 
@@ -321,129 +238,136 @@ def get_first_image(post):
 def clean_article(body):
 
     if not body:
-
         return ""
 
     text = body
 
+    # Remove HTML comments
     text = re.sub(
         r'<!--.*?-->',
         '',
         text,
-        flags=re.DOTALL
+        flags=re.S
     )
 
-    text = IMAGE_MARKDOWN_RE.sub(
+    # Remove Markdown images
+    text = re.sub(
+        r'!\[[^\]]*\]\([^)]*\)',
         '',
         text
     )
 
-    text = HTML_IMAGE_RE.sub(
-        '',
-        text
-    )
-
+    # Remove HTML images
     text = re.sub(
-        r'</?div\b[^>]*>',
+        r'<img\b[^>]*>',
         '',
         text,
-        flags=re.IGNORECASE
+        flags=re.I
     )
 
+    # Remove image URLs
     text = re.sub(
-        r'</?p\b[^>]*>',
+        r'https?://[^\s<>"\']+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?[^\s<>"\']*)?',
         '',
         text,
-        flags=re.IGNORECASE
+        flags=re.I
     )
 
-    text = re.sub(
-        r'</?span\b[^>]*>',
-        '',
-        text,
-        flags=re.IGNORECASE
-    )
-
-    text = re.sub(
-        r'</?center\b[^>]*>',
-        '',
-        text,
-        flags=re.IGNORECASE
-    )
-
-    text = re.sub(
-        r'<br\s*/?>',
-        '\n',
-        text,
-        flags=re.IGNORECASE
-    )
-
+    # HTML links -> visible text
     text = re.sub(
         r'<a\b[^>]*>(.*?)</a>',
         r'\1',
         text,
-        flags=re.IGNORECASE | re.DOTALL
+        flags=re.I | re.S
     )
 
+    # Markdown links -> visible text
+    text = re.sub(
+        r'\[([^\]]+)\]\([^)]+\)',
+        r'\1',
+        text
+    )
+
+    # Common HTML line breaks
+    text = re.sub(
+        r'<br\s*/?>',
+        '\n',
+        text,
+        flags=re.I
+    )
+
+    # Paragraph/div/center boundaries
+    text = re.sub(
+        r'</(?:p|div|center|section|article|li|blockquote)>',
+        '\n',
+        text,
+        flags=re.I
+    )
+
+    text = re.sub(
+        r'<(?:p|div|center|section|article|li|blockquote)[^>]*>',
+        '',
+        text,
+        flags=re.I
+    )
+
+    # Remove remaining HTML tags
     text = re.sub(
         r'<[^>]+>',
         '',
         text
     )
 
-    text = re.sub(
-        r'\[([^\]]+)\]\(\s*https?://[^)\s]+[^)]*\)',
-        r'\1',
-        text
-    )
-
+    # Markdown headings
     text = re.sub(
         r'^\s{0,3}#{1,6}\s*',
         '',
         text,
-        flags=re.MULTILINE
+        flags=re.M
+    )
+
+    # Bold / italic / strike
+    text = re.sub(
+        r'(\*\*|__)(.*?)\1',
+        r'\2',
+        text,
+        flags=re.S
     )
 
     text = re.sub(
-        r'\*\*\*(.*?)\*\*\*',
+        r'(\*|_)(.*?)\1',
+        r'\2',
+        text,
+        flags=re.S
+    )
+
+    text = re.sub(
+        r'~~(.*?)~~',
         r'\1',
         text,
-        flags=re.DOTALL
+        flags=re.S
     )
 
-    text = re.sub(
-        r'\*\*(.*?)\*\*',
-        r'\1',
-        text,
-        flags=re.DOTALL
-    )
-
-    text = re.sub(
-        r'__(.*?)__',
-        r'\1',
-        text,
-        flags=re.DOTALL
-    )
-
-    text = re.sub(
-        r'(?<!\*)\*([^*\n]+)\*(?!\*)',
-        r'\1',
-        text
-    )
-
-    text = re.sub(
-        r'(?<!_)_([^_\n]+)_(?!_)',
-        r'\1',
-        text
-    )
-
+    # Horizontal rules
     text = re.sub(
         r'^\s*([-*_])(?:\s*\1){2,}\s*$',
         '',
         text,
-        flags=re.MULTILINE
+        flags=re.M
     )
 
+    # Decode common HTML entities
+    text = (
+        text
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+    )
+
+    # Remove excessive blank lines
     text = re.sub(
         r'\n[ \t]+\n',
         '\n\n',
@@ -456,1704 +380,823 @@ def clean_article(body):
         text
     )
 
-    lines = []
-
-    for line in text.splitlines():
-
-        lines.append(
-            line.strip()
-        )
-
-    text = "\n".join(lines)
+    # Remove spaces at line ends
+    text = re.sub(
+        r'[ \t]+\n',
+        '\n',
+        text
+    )
 
     return text.strip()
+
+
+# ============================================================
+# CLEAN POST
+# ============================================================
+
+def prepare_post(post):
+
+    body = post.get("body", "")
+    metadata = post.get("json_metadata", "{}")
+
+    image = get_first_image(
+        body,
+        metadata
+    )
+
+    clean_body = clean_article(body)
+
+    return {
+        "id": f"{post.get('author')}/{post.get('permlink')}",
+        "title": post.get("title", "").strip(),
+        "body": clean_body,
+        "image": image,
+        "category": post.get("category", ""),
+        "created": post.get("created", "")
+    }
+
+
+# ============================================================
+# GET STEEM POSTS
+# ============================================================
+
+def get_posts():
+
+    print(
+        f"Getting posts from @{STEEM_USERNAME}...",
+        flush=True
+    )
+
+    posts = []
+    seen = set()
+
+    start_author = None
+    start_permlink = None
+
+    cutoff = datetime.now(
+        timezone.utc
+    ).timestamp() - (
+        DAYS_TO_SYNC * 24 * 60 * 60
+    )
+
+    page_number = 0
+
+    while len(posts) < 5000:
+
+        params = {
+            "tag": STEEM_USERNAME,
+            "limit": 100
+        }
+
+        if start_author:
+
+            params["start_author"] = start_author
+            params["start_permlink"] = start_permlink
+
+        page_number += 1
+
+        print(
+            f"Steem page {page_number}: requesting 100 results",
+            flush=True
+        )
+
+        result = rpc(
+            "condenser_api.get_discussions_by_blog",
+            params
+        )
+
+        if not result:
+            break
+
+        print(
+            f"Steem page {page_number}: {len(result)} results",
+            flush=True
+        )
+
+        batch = result[1:] if start_author else result
+
+        if not batch:
+            break
+
+        for post in batch:
+
+            author = post.get(
+                "author",
+                ""
+            )
+
+            permlink = post.get(
+                "permlink",
+                ""
+            )
+
+            if author != STEEM_USERNAME:
+                continue
+
+            if not permlink:
+                continue
+
+            post_id = f"{author}/{permlink}"
+
+            if post_id in seen:
+                continue
+
+            seen.add(post_id)
+
+            created = parse_steem_date(
+                post.get("created", "")
+            )
+
+            if not created:
+                continue
+
+            if created.timestamp() < cutoff:
+                continue
+
+            posts.append(
+                prepare_post(post)
+            )
+
+        last = result[-1]
+
+        new_author = last.get("author")
+        new_permlink = last.get("permlink")
+
+        if (
+            new_author == start_author
+            and new_permlink == start_permlink
+        ):
+            break
+
+        start_author = new_author
+        start_permlink = new_permlink
+
+        if len(result) < 100:
+            break
+
+        time.sleep(0.3)
+
+    # Oldest -> newest
+    posts.sort(
+        key=lambda x: parse_steem_date(
+            x.get("created", "")
+        ) or datetime.min.replace(
+            tzinfo=timezone.utc
+        )
+    )
+
+    print(
+        f"Total posts in last {DAYS_TO_SYNC} days: {len(posts)}",
+        flush=True
+    )
+
+    if posts:
+
+        print(
+            f"Oldest: {posts[0]['created']} {posts[0]['id']}",
+            flush=True
+        )
+
+        print(
+            f"Newest: {posts[-1]['created']} {posts[-1]['id']}",
+            flush=True
+        )
+
+    return posts
 
 
 # ============================================================
 # DOWNLOAD IMAGE
 # ============================================================
 
-def detect_extension(url, response):
+def download_image(url):
 
-    content_type = (
-        response.headers.get(
-            "content-type",
-            ""
-        ).lower()
-    )
-
-    if "png" in content_type:
-
-        return ".png"
-
-    if "webp" in content_type:
-
-        return ".webp"
-
-    if "gif" in content_type:
-
-        return ".gif"
-
-    if (
-        "jpeg" in content_type
-        or "jpg" in content_type
-    ):
-
-        return ".jpg"
-
-    path = url.lower().split("?")[0]
-
-    for ext in [
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".webp",
-        ".gif"
-    ]:
-
-        if path.endswith(ext):
-
-            return ext
-
-    return ".jpg"
-
-
-def download_image(
-    url,
-    filename
-):
-
-    print()
-    print(
-        "Downloading thumbnail:"
-    )
-
-    print(url)
+    if not url:
+        return None
 
     try:
 
+        print(
+            "Downloading thumbnail:",
+            flush=True
+        )
+
+        print(
+            url,
+            flush=True
+        )
+
         response = requests.get(
             url,
-            timeout=REQUEST_TIMEOUT,
-            stream=True,
+            timeout=30,
             headers={
-                "User-Agent":
-                    "Mozilla/5.0"
+                "User-Agent": "Mozilla/5.0"
             }
         )
 
         response.raise_for_status()
 
-        extension = detect_extension(
-            url,
-            response
-        )
+        content_type = response.headers.get(
+            "content-type",
+            ""
+        ).lower()
 
-        path = Path(
-            Path(filename).stem
-            + extension
-        )
-
-        total = 0
-
-        with open(
-            path,
-            "wb"
-        ) as f:
-
-            for chunk in response.iter_content(
-                chunk_size=65536
-            ):
-
-                if not chunk:
-
-                    continue
-
-                total += len(chunk)
-
-                if total > MAX_IMAGE_SIZE:
-
-                    try:
-
-                        path.unlink()
-
-                    except Exception:
-
-                        pass
-
-                    print(
-                        "✗ Thumbnail too large"
-                    )
-
-                    return None
-
-                f.write(chunk)
-
-        if total == 0:
+        if "image" not in content_type:
 
             print(
-                "✗ Empty image"
+                f"Not an image: {content_type}",
+                flush=True
             )
 
             return None
 
+        if len(response.content) > 30 * 1024 * 1024:
+
+            print(
+                "Image is larger than 30 MB.",
+                flush=True
+            )
+
+            return None
+
+        with open(
+            TEMP_IMAGE,
+            "wb"
+        ) as f:
+
+            f.write(response.content)
+
         print(
-            f"✓ Thumbnail downloaded: "
-            f"{path.name} "
-            f"({total} bytes)"
+            f"✓ Thumbnail downloaded: {TEMP_IMAGE} "
+            f"({len(response.content)} bytes)",
+            flush=True
         )
 
-        return str(path)
+        return TEMP_IMAGE
 
     except Exception as e:
 
         print(
-            f"✗ Thumbnail download failed: "
-            f"{e}"
+            f"Thumbnail download failed: {e}",
+            flush=True
         )
 
         return None
 
 
 # ============================================================
-# DEBUG PAGE
+# CROP MODAL
 # ============================================================
 
-def debug_page(
-    page,
-    filename="serey_debug"
-):
-
-    print()
-    print(
-        "=" * 60
-    )
+def handle_crop_modal(page):
 
     print(
-        "SEREY DEBUG"
-    )
-
-    print(
-        "=" * 60
-    )
-
-    print(
-        "Current URL:",
-        page.url
+        "Checking thumbnail crop modal...",
+        flush=True
     )
 
     try:
 
-        inputs = page.locator(
-            "input, textarea"
+        # Wait a short time for modal
+        page.wait_for_timeout(1500)
+
+        crop = page.locator(
+            '[data-testid="cropper"]'
         )
+
+        modal = page.locator(
+            '.ant-modal'
+        )
+
+        if crop.count() == 0 and modal.count() == 0:
+
+            print(
+                "No crop modal detected.",
+                flush=True
+            )
+
+            return True
 
         print(
-            "Inputs:",
-            inputs.count()
+            "✓ Image crop modal detected",
+            flush=True
         )
 
-        for i in range(
-            inputs.count()
-        ):
+        # ----------------------------------------------------
+        # Find visible modal
+        # ----------------------------------------------------
+
+        visible_modal = None
+
+        for i in range(modal.count()):
+
+            m = modal.nth(i)
 
             try:
 
-                item = inputs.nth(i)
-
-                print(
-                    f"[{i}] "
-                    f"tag={item.evaluate('(e)=>e.tagName')} "
-                    f"type={item.get_attribute('type')} "
-                    f"name={item.get_attribute('name')} "
-                    f"placeholder={item.get_attribute('placeholder')} "
-                    f"accept={item.get_attribute('accept')} "
-                    f"aria={item.get_attribute('aria-label')}"
-                )
+                if m.is_visible():
+                    visible_modal = m
+                    break
 
             except Exception:
-
                 pass
 
-    except Exception:
+        if visible_modal:
 
-        pass
+            buttons = visible_modal.locator(
+                "button"
+            )
 
-    try:
+        else:
 
-        page.screenshot(
-            path=f"{filename}.png",
-            full_page=True
-        )
+            buttons = page.locator(
+                ".ant-modal button"
+            )
 
         print(
-            f"✓ Screenshot saved: "
-            f"{filename}.png"
+            f"Modal buttons found: {buttons.count()}",
+            flush=True
         )
+
+        # ----------------------------------------------------
+        # Print buttons
+        # ----------------------------------------------------
+
+        for i in range(buttons.count()):
+
+            b = buttons.nth(i)
+
+            try:
+
+                text = b.inner_text().strip()
+            except Exception:
+                text = ""
+
+            try:
+
+                aria = b.get_attribute("aria-label") or ""
+            except Exception:
+                aria = ""
+
+            try:
+
+                title = b.get_attribute("title") or ""
+            except Exception:
+                title = ""
+
+            print(
+                f"Modal button {i}: "
+                f"text='{text}' "
+                f"aria='{aria}' "
+                f"title='{title}'",
+                flush=True
+            )
+
+        # ----------------------------------------------------
+        # Confirmation words
+        # ----------------------------------------------------
+
+        confirmation_words = [
+            "OK",
+            "Ok",
+            "ok",
+            "Confirm",
+            "CONFIRM",
+            "Save",
+            "SAVE",
+            "Done",
+            "DONE",
+            "Upload",
+            "UPLOAD",
+            "Crop",
+            "CROP",
+            "Continue",
+            "CONTINUE"
+        ]
+
+        for i in range(buttons.count()):
+
+            b = buttons.nth(i)
+
+            try:
+
+                if not b.is_visible():
+                    continue
+
+                text = b.inner_text().strip()
+                aria = (
+                    b.get_attribute("aria-label")
+                    or ""
+                ).strip()
+
+                title = (
+                    b.get_attribute("title")
+                    or ""
+                ).strip()
+
+                combined = (
+                    f"{text} {aria} {title}"
+                ).strip()
+
+                for word in confirmation_words:
+
+                    if combined.lower() == word.lower():
+
+                        print(
+                            f"✓ Clicking crop confirmation "
+                            f"button: {combined}",
+                            flush=True
+                        )
+
+                        b.click(
+                            force=True,
+                            timeout=10000
+                        )
+
+                        page.wait_for_timeout(2000)
+
+                        # Verify modal disappeared
+                        if (
+                            page.locator(
+                                '[data-testid="cropper"]'
+                            ).count() == 0
+                        ):
+
+                            print(
+                                "✓ Crop modal closed",
+                                flush=True
+                            )
+
+                            return True
+
+            except Exception:
+                continue
+
+        # ----------------------------------------------------
+        # Fallback: exact text
+        # ----------------------------------------------------
+
+        for word in [
+            "OK",
+            "Confirm",
+            "Save",
+            "Done",
+            "Upload",
+            "Crop"
+        ]:
+
+            try:
+
+                loc = page.get_by_text(
+                    word,
+                    exact=True
+                )
+
+                for i in range(loc.count()):
+
+                    item = loc.nth(i)
+
+                    if item.is_visible():
+
+                        print(
+                            f"✓ Clicking crop text: {word}",
+                            flush=True
+                        )
+
+                        item.click(
+                            force=True,
+                            timeout=10000
+                        )
+
+                        page.wait_for_timeout(2000)
+
+                        if page.locator(
+                            '[data-testid="cropper"]'
+                        ).count() == 0:
+
+                            print(
+                                "✓ Crop modal closed",
+                                flush=True
+                            )
+
+                            return True
+
+            except Exception:
+                pass
+
+        # ----------------------------------------------------
+        # Keyboard fallback
+        # ----------------------------------------------------
+
+        try:
+
+            print(
+                "Trying Enter key for crop confirmation...",
+                flush=True
+            )
+
+            page.keyboard.press("Enter")
+
+            page.wait_for_timeout(2000)
+
+            if page.locator(
+                '[data-testid="cropper"]'
+            ).count() == 0:
+
+                print(
+                    "✓ Crop modal closed with Enter",
+                    flush=True
+                )
+
+                return True
+
+        except Exception:
+            pass
+
+        print(
+            "❌ Crop modal could not be closed.",
+            flush=True
+        )
+
+        return False
 
     except Exception as e:
 
         print(
-            f"Screenshot failed: {e}"
-        )
-
-    try:
-
-        html = page.locator(
-            "body"
-        ).evaluate(
-            "(e) => e.outerHTML"
-        )
-
-        with open(
-            f"{filename}.html",
-            "w",
-            encoding="utf-8"
-        ) as f:
-
-            f.write(html)
-
-        print(
-            f"✓ HTML saved: "
-            f"{filename}.html"
-        )
-
-    except Exception as e:
-
-        print(
-            f"HTML save failed: {e}"
-        )
-
-
-# ============================================================
-# LOGIN
-# ============================================================
-
-def login(page):
-
-    print(
-        "Logging into Serey..."
-    )
-
-    page.goto(
-        SEREY,
-        wait_until="domcontentloaded",
-        timeout=60000
-    )
-
-    page.wait_for_timeout(
-        4000
-    )
-
-    if "/login" not in page.url.lower():
-
-        print(
-            "After login URL:",
-            page.url
-        )
-
-        print(
-            "✓ LOGGED INTO SEREY SUCCESSFULLY!"
-        )
-
-        return True
-
-    username_box = None
-    password_box = None
-
-    username_selectors = [
-        'input[placeholder*="username" i]',
-        'input[placeholder*="email" i]',
-        'input[name="username"]',
-        'input[name="email"]',
-        'input[type="text"]',
-    ]
-
-    password_selectors = [
-        'input[type="password"]',
-        'input[name="password"]',
-        'input[placeholder*="password" i]',
-    ]
-
-    for selector in username_selectors:
-
-        try:
-
-            loc = page.locator(
-                selector
-            )
-
-            for i in range(
-                loc.count()
-            ):
-
-                item = loc.nth(i)
-
-                if (
-                    item.is_visible()
-                    and item.is_enabled()
-                ):
-
-                    username_box = item
-
-                    break
-
-            if username_box:
-
-                break
-
-        except Exception:
-
-            pass
-
-    for selector in password_selectors:
-
-        try:
-
-            loc = page.locator(
-                selector
-            )
-
-            for i in range(
-                loc.count()
-            ):
-
-                item = loc.nth(i)
-
-                if (
-                    item.is_visible()
-                    and item.is_enabled()
-                ):
-
-                    password_box = item
-
-                    break
-
-            if password_box:
-
-                break
-
-        except Exception:
-
-            pass
-
-    if not username_box or not password_box:
-
-        print(
-            "✗ Login fields not found"
-        )
-
-        debug_page(
-            page,
-            "serey_login_debug"
+            f"Crop modal check failed: {e}",
+            flush=True
         )
 
         return False
 
-    username_box.fill(
-        SEREY_LOGIN
-    )
-
-    password_box.fill(
-        SEREY_PASSWORD
-    )
-
-    login_button = None
-
-    selectors = [
-        'button:has-text("Login")',
-        'button:has-text("Log in")',
-        'button[type="submit"]',
-    ]
-
-    for selector in selectors:
-
-        try:
-
-            loc = page.locator(
-                selector
-            )
-
-            for i in range(
-                loc.count()
-            ):
-
-                item = loc.nth(i)
-
-                if (
-                    item.is_visible()
-                    and item.is_enabled()
-                ):
-
-                    login_button = item
-
-                    break
-
-            if login_button:
-
-                break
-
-        except Exception:
-
-            pass
-
-    if not login_button:
-
-        print(
-            "✗ Login button not found"
-        )
-
-        return False
-
-    login_button.click()
-
-    page.wait_for_timeout(
-        5000
-    )
-
-    print(
-        "After login URL:",
-        page.url
-    )
-
-    if "/login" in page.url.lower():
-
-        print(
-            "✗ LOGIN FAILED"
-        )
-
-        return False
-
-    print(
-        "✓ LOGGED INTO SEREY SUCCESSFULLY!"
-    )
-
-    return True
-
 
 # ============================================================
-# TITLE
+# FILL TITLE
 # ============================================================
 
-def find_title_box(page):
+def fill_title(page, title):
 
-    print()
     print(
-        "Looking for Serey title field..."
+        "Looking for Serey title field...",
+        flush=True
     )
 
     selectors = [
         'textarea[placeholder="Enter title..."]',
         'input[placeholder="Enter title..."]',
-        'textarea[placeholder*="Enter title" i]',
-        'input[placeholder*="Enter title" i]',
         'textarea[name="title"]',
         'input[name="title"]',
-        'textarea[aria-label*="title" i]',
-        'input[aria-label*="title" i]',
-        'textarea[id*="title" i]',
-        'input[id*="title" i]',
-    ]
-
-    deadline = time.time() + 30
-
-    while time.time() < deadline:
-
-        for selector in selectors:
-
-            try:
-
-                loc = page.locator(
-                    selector
-                )
-
-                count = loc.count()
-
-                print(
-                    f"Checking: "
-                    f"{selector} -> {count}"
-                )
-
-                for i in range(count):
-
-                    item = loc.nth(i)
-
-                    if (
-                        item.is_visible()
-                        and item.is_enabled()
-                    ):
-
-                        print(
-                            f"✓ Title field found: "
-                            f"{selector}"
-                        )
-
-                        return item
-
-            except Exception:
-
-                pass
-
-        time.sleep(0.5)
-
-    print(
-        "✗ Serey title input not found"
-    )
-
-    debug_page(
-        page,
-        "serey_title_debug"
-    )
-
-    return None
-
-
-# ============================================================
-# EDITOR
-# ============================================================
-
-def find_editor(page):
-
-    print()
-    print(
-        "Looking for content editor..."
-    )
-
-    selectors = [
-        '[contenteditable="true"]',
-        '.ProseMirror',
-        '[role="textbox"][contenteditable="true"]',
-    ]
-
-    deadline = time.time() + 30
-
-    while time.time() < deadline:
-
-        for selector in selectors:
-
-            try:
-
-                loc = page.locator(
-                    selector
-                )
-
-                for i in range(
-                    loc.count()
-                ):
-
-                    item = loc.nth(i)
-
-                    if (
-                        item.is_visible()
-                        and item.is_enabled()
-                    ):
-
-                        print(
-                            f"✓ Editor found: "
-                            f"{selector}"
-                        )
-
-                        return item
-
-            except Exception:
-
-                pass
-
-        time.sleep(0.5)
-
-    print(
-        "✗ Editor not found"
-    )
-
-    debug_page(
-        page,
-        "serey_editor_debug"
-    )
-
-    return None
-
-
-# ============================================================
-# THUMBNAIL BUTTONS
-# ============================================================
-
-def find_thumbnail_buttons(page):
-
-    result = []
-
-    try:
-
-        buttons = page.locator(
-            "button, [role='button']"
-        )
-
-        for i in range(
-            buttons.count()
-        ):
-
-            try:
-
-                button = buttons.nth(i)
-
-                if not button.is_visible():
-
-                    continue
-
-                aria = (
-                    button.get_attribute(
-                        "aria-label"
-                    ) or ""
-                ).lower()
-
-                title = (
-                    button.get_attribute(
-                        "title"
-                    ) or ""
-                ).lower()
-
-                text = ""
-
-                try:
-
-                    text = button.inner_text(
-                        timeout=500
-                    ).strip().lower()
-
-                except Exception:
-
-                    pass
-
-                combined = " ".join([
-                    aria,
-                    title,
-                    text
-                ])
-
-                if any(
-                    word in combined
-                    for word in [
-                        "thumbnail",
-                        "cover",
-                        "featured image",
-                        "featured"
-                    ]
-                ):
-
-                    result.append(
-                        button
-                    )
-
-            except Exception:
-
-                pass
-
-    except Exception:
-
-        pass
-
-    return result
-
-
-# ============================================================
-# FILE INPUTS
-# ============================================================
-
-def get_file_inputs(page):
-
-    result = []
-
-    try:
-
-        loc = page.locator(
-            'input[type="file"]'
-        )
-
-        count = loc.count()
-
-        print(
-            f"File inputs detected: "
-            f"{count}"
-        )
-
-        for i in range(count):
-
-            item = loc.nth(i)
-
-            accept = (
-                item.get_attribute(
-                    "accept"
-                ) or ""
-            )
-
-            name = (
-                item.get_attribute(
-                    "name"
-                ) or ""
-            )
-
-            print(
-                f"File input {i}: "
-                f"accept={accept} "
-                f"name={name}"
-            )
-
-            result.append(
-                item
-            )
-
-    except Exception as e:
-
-        print(
-            f"File input error: {e}"
-        )
-
-    return result
-
-
-# ============================================================
-# HANDLE IMAGE CROP MODAL
-# ============================================================
-
-def handle_crop_modal(page):
-
-    print()
-    print(
-        "Checking thumbnail crop modal..."
-    )
-
-    # --------------------------------------------------------
-    # Wait briefly for crop modal
-    # --------------------------------------------------------
-
-    deadline = time.time() + 15
-
-    crop_detected = False
-
-    while time.time() < deadline:
-
-        try:
-
-            cropper = page.locator(
-                '[data-testid="cropper"]'
-            )
-
-            if cropper.count() > 0:
-
-                if cropper.first.is_visible():
-
-                    crop_detected = True
-
-                    print(
-                        "✓ Image crop modal detected"
-                    )
-
-                    break
-
-        except Exception:
-
-            pass
-
-        # Also check Ant Design modal
-        try:
-
-            modal = page.locator(
-                ".ant-modal"
-            )
-
-            if modal.count() > 0:
-
-                for i in range(
-                    modal.count()
-                ):
-
-                    item = modal.nth(i)
-
-                    if item.is_visible():
-
-                        text = ""
-
-                        try:
-
-                            text = item.inner_text(
-                                timeout=500
-                            ).lower()
-
-                        except Exception:
-
-                            pass
-
-                        if any(
-                            word in text
-                            for word in [
-                                "crop",
-                                "image",
-                                "upload",
-                                "confirm"
-                            ]
-                        ):
-
-                            crop_detected = True
-
-                            print(
-                                "✓ Ant Design image "
-                                "modal detected"
-                            )
-
-                            break
-
-        except Exception:
-
-            pass
-
-        if crop_detected:
-
-            break
-
-        page.wait_for_timeout(
-            500
-        )
-
-    if not crop_detected:
-
-        print(
-            "No crop modal detected."
-        )
-
-        return True
-
-    # --------------------------------------------------------
-    # Find modal buttons
-    # --------------------------------------------------------
-
-    button_texts = [
-        "Confirm",
-        "confirm",
-        "OK",
-        "Ok",
-        "ok",
-        "Save",
-        "save",
-        "Done",
-        "done",
-        "Upload",
-        "upload",
-        "Crop",
-        "crop",
-    ]
-
-    # First look specifically inside Ant modal
-    try:
-
-        modal_buttons = page.locator(
-            ".ant-modal button"
-        )
-
-        print(
-            f"Modal buttons found: "
-            f"{modal_buttons.count()}"
-        )
-
-        for i in range(
-            modal_buttons.count()
-        ):
-
-            try:
-
-                button = modal_buttons.nth(i)
-
-                if not button.is_visible():
-
-                    continue
-
-                if not button.is_enabled():
-
-                    continue
-
-                text = ""
-
-                try:
-
-                    text = button.inner_text(
-                        timeout=1000
-                    ).strip()
-
-                except Exception:
-
-                    pass
-
-                aria = (
-                    button.get_attribute(
-                        "aria-label"
-                    ) or ""
-                ).strip()
-
-                title = (
-                    button.get_attribute(
-                        "title"
-                    ) or ""
-                ).strip()
-
-                combined = (
-                    f"{text} {aria} {title}"
-                ).strip().lower()
-
-                print(
-                    f"Modal button {i}: "
-                    f"text='{text}' "
-                    f"aria='{aria}' "
-                    f"title='{title}'"
-                )
-
-                if any(
-                    word.lower() in combined
-                    for word in button_texts
-                ):
-
-                    print(
-                        f"✓ Clicking crop "
-                        f"confirmation button: "
-                        f"{text or aria or title}"
-                    )
-
-                    try:
-
-                        button.click(
-                            timeout=10000
-                        )
-
-                    except Exception:
-
-                        button.evaluate(
-                            "(e) => e.click()"
-                        )
-
-                    page.wait_for_timeout(
-                        2500
-                    )
-
-                    # Check if modal disappeared
-                    try:
-
-                        if (
-                            page.locator(
-                                '[data-testid="cropper"]'
-                            ).count() == 0
-                            or not page.locator(
-                                '[data-testid="cropper"]'
-                            ).first.is_visible()
-                        ):
-
-                            print(
-                                "✓ Crop modal closed"
-                            )
-
-                            return True
-
-                    except Exception:
-
-                        return True
-
-            except Exception:
-
-                pass
-
-    except Exception:
-
-        pass
-
-    # --------------------------------------------------------
-    # Generic visible button search
-    # --------------------------------------------------------
-
-    try:
-
-        buttons = page.locator(
-            "button, [role='button']"
-        )
-
-        for i in range(
-            buttons.count()
-        ):
-
-            try:
-
-                button = buttons.nth(i)
-
-                if not button.is_visible():
-
-                    continue
-
-                if not button.is_enabled():
-
-                    continue
-
-                # Only inspect buttons near modal
-                text = ""
-
-                try:
-
-                    text = button.inner_text(
-                        timeout=500
-                    ).strip()
-
-                except Exception:
-
-                    pass
-
-                aria = (
-                    button.get_attribute(
-                        "aria-label"
-                    ) or ""
-                ).strip()
-
-                combined = (
-                    f"{text} {aria}"
-                ).lower()
-
-                if any(
-                    word.lower() in combined
-                    for word in button_texts
-                ):
-
-                    print(
-                        f"✓ Clicking visible "
-                        f"modal action: "
-                        f"{text or aria}"
-                    )
-
-                    try:
-
-                        button.click(
-                            timeout=5000
-                        )
-
-                    except Exception:
-
-                        button.evaluate(
-                            "(e) => e.click()"
-                        )
-
-                    page.wait_for_timeout(
-                        2500
-                    )
-
-                    return True
-
-            except Exception:
-
-                pass
-
-    except Exception:
-
-        pass
-
-    # --------------------------------------------------------
-    # Last fallback: press Enter
-    # --------------------------------------------------------
-
-    print(
-        "⚠ Could not identify crop "
-        "confirmation button."
-    )
-
-    print(
-        "Trying Enter key..."
-    )
-
-    try:
-
-        page.keyboard.press(
-            "Enter"
-        )
-
-        page.wait_for_timeout(
-            2500
-        )
-
-        print(
-            "✓ Enter key sent to crop modal"
-        )
-
-        return True
-
-    except Exception as e:
-
-        print(
-            f"✗ Crop modal could not "
-            f"be completed: {e}"
-        )
-
-        return False
-
-
-# ============================================================
-# UPLOAD THUMBNAIL
-# ============================================================
-
-def upload_thumbnail(
-    page,
-    thumbnail_path
-):
-
-    if not thumbnail_path:
-
-        print(
-            "⚠ No thumbnail available."
-        )
-
-        return True
-
-    print()
-    print(
-        "=" * 60
-    )
-
-    print(
-        "Uploading FIRST IMAGE as thumbnail"
-    )
-
-    print(
-        "=" * 60
-    )
-
-    print(
-        f"Thumbnail file: "
-        f"{thumbnail_path}"
-    )
-
-    # --------------------------------------------------------
-    # Dedicated thumbnail button
-    # --------------------------------------------------------
-
-    buttons = find_thumbnail_buttons(
-        page
-    )
-
-    print(
-        f"Thumbnail buttons found: "
-        f"{len(buttons)}"
-    )
-
-    for button in buttons:
-
-        try:
-
-            with page.expect_file_chooser(
-                timeout=4000
-            ) as chooser_info:
-
-                button.click()
-
-            chooser = chooser_info.value
-
-            chooser.set_files(
-                thumbnail_path
-            )
-
-            print(
-                "✓ Thumbnail selected "
-                "through file chooser"
-            )
-
-            page.wait_for_timeout(
-                1500
-            )
-
-            # IMPORTANT:
-            # Handle crop modal
-            if not handle_crop_modal(
-                page
-            ):
-
-                return False
-
-            return True
-
-        except Exception as e:
-
-            print(
-                f"Thumbnail button attempt "
-                f"failed: {e}"
-            )
-
-    # --------------------------------------------------------
-    # Direct file input
-    # --------------------------------------------------------
-
-    inputs = get_file_inputs(
-        page
-    )
-
-    thumbnail_inputs = []
-
-    for i, item in enumerate(inputs):
-
-        try:
-
-            accept = (
-                item.get_attribute(
-                    "accept"
-                ) or ""
-            ).lower()
-
-            name = (
-                item.get_attribute(
-                    "name"
-                ) or ""
-            ).lower()
-
-            input_id = (
-                item.get_attribute(
-                    "id"
-                ) or ""
-            ).lower()
-
-            combined = " ".join([
-                accept,
-                name,
-                input_id
-            ])
-
-            if any(
-                word in combined
-                for word in [
-                    "thumbnail",
-                    "cover",
-                    "featured"
-                ]
-            ):
-
-                thumbnail_inputs.append(
-                    (i, item)
-                )
-
-        except Exception:
-
-            pass
-
-    if thumbnail_inputs:
-
-        index, item = thumbnail_inputs[0]
-
-        try:
-
-            item.set_input_files(
-                thumbnail_path
-            )
-
-            print(
-                f"✓ Thumbnail uploaded "
-                f"using input {index}"
-            )
-
-            page.wait_for_timeout(
-                1500
-            )
-
-            if not handle_crop_modal(
-                page
-            ):
-
-                return False
-
-            return True
-
-        except Exception as e:
-
-            print(
-                f"Thumbnail input failed: "
-                f"{e}"
-            )
-
-    # --------------------------------------------------------
-    # Single input fallback
-    # --------------------------------------------------------
-
-    if len(inputs) == 1:
-
-        print(
-            "Only one image input exists."
-        )
-
-        print(
-            "Using it for thumbnail."
-        )
-
-        try:
-
-            inputs[0].set_input_files(
-                thumbnail_path
-            )
-
-            print(
-                "✓ Thumbnail uploaded "
-                "using single image input"
-            )
-
-            page.wait_for_timeout(
-                1500
-            )
-
-            # IMPORTANT:
-            # Serey opens crop modal here.
-            if not handle_crop_modal(
-                page
-            ):
-
-                return False
-
-            print(
-                "✓ Thumbnail crop "
-                "confirmed"
-            )
-
-            return True
-
-        except Exception as e:
-
-            print(
-                f"Single thumbnail input "
-                f"failed: {e}"
-            )
-
-    print(
-        "⚠ Thumbnail upload could "
-        "not be confirmed."
-    )
-
-    debug_page(
-        page,
-        "serey_thumbnail_debug"
-    )
-
-    return True
-
-
-# ============================================================
-# TYPE ARTICLE
-# ============================================================
-
-def type_article(
-    page,
-    editor,
-    article
-):
-
-    print()
-    print(
-        "Entering clean article..."
-    )
-
-    print(
-        f"Clean article length: "
-        f"{len(article)} characters"
-    )
-
-    # --------------------------------------------------------
-    # Make sure no modal is blocking editor
-    # --------------------------------------------------------
-
-    try:
-
-        cropper = page.locator(
-            '[data-testid="cropper"]'
-        )
-
-        if cropper.count() > 0:
-
-            if cropper.first.is_visible():
-
-                print(
-                    "⚠ Crop modal still open."
-                )
-
-                if not handle_crop_modal(
-                    page
-                ):
-
-                    raise RuntimeError(
-                        "Thumbnail crop modal "
-                        "is still open."
-                    )
-
-    except Exception:
-
-        pass
-
-    # --------------------------------------------------------
-    # Wait for editor to become usable
-    # --------------------------------------------------------
-
-    try:
-
-        editor.wait_for(
-            state="visible",
-            timeout=15000
-        )
-
-    except Exception:
-
-        pass
-
-    page.wait_for_timeout(
-        1000
-    )
-
-    # --------------------------------------------------------
-    # Normal click
-    # --------------------------------------------------------
-
-    try:
-
-        editor.click(
-            timeout=10000
-        )
-
-    except Exception:
-
-        print(
-            "Normal editor click failed."
-        )
-
-        print(
-            "Using force click..."
-        )
-
-        editor.click(
-            force=True,
-            timeout=10000
-        )
-
-    page.keyboard.insert_text(
-        article
-    )
-
-    print(
-        "✓ Clean article inserted"
-    )
-
-
-# ============================================================
-# FIND PUBLISH BUTTON
-# ============================================================
-
-def find_publish_button(page):
-
-    selectors = [
-        'button:has-text("Publish")',
-        'button:has-text("Post")',
-        'button:has-text("Publish Post")',
-        '[role="button"]:has-text("Publish")',
-        '[role="button"]:has-text("Post")',
+        'input[placeholder*="Title" i]',
+        'textarea[placeholder*="Title" i]'
     ]
 
     for selector in selectors:
 
         try:
 
-            loc = page.locator(
-                selector
+            loc = page.locator(selector)
+
+            print(
+                f"Checking: {selector} -> {loc.count()}",
+                flush=True
             )
 
-            for i in range(
-                loc.count()
-            ):
+            for i in range(loc.count()):
 
-                button = loc.nth(i)
+                field = loc.nth(i)
 
-                if (
-                    button.is_visible()
-                    and button.is_enabled()
-                ):
+                if field.is_visible():
 
-                    return button
+                    field.fill(title)
+
+                    print(
+                        f"✓ Title field found: {selector}",
+                        flush=True
+                    )
+
+                    print(
+                        "✓ Title filled",
+                        flush=True
+                    )
+
+                    return True
 
         except Exception:
+            continue
 
-            pass
+    print(
+        "❌ Title field not found.",
+        flush=True
+    )
 
-    return None
+    return False
 
 
 # ============================================================
-# CHECK PUBLISHED URL
+# FILL ARTICLE
 # ============================================================
 
-def is_published_post_url(url):
+def fill_article(page, body):
 
-    try:
+    print(
+        "Looking for content editor...",
+        flush=True
+    )
 
-        parsed = urlparse(url)
+    editors = page.locator(
+        '[contenteditable="true"]'
+    )
 
-        hostname = (
-            parsed.hostname or ""
-        ).lower()
+    for i in range(editors.count()):
 
-        path = (
-            parsed.path or ""
-        ).lower()
+        editor = editors.nth(i)
 
-        if hostname not in PUBLISHED_HOSTS:
+        try:
 
-            return False
+            if not editor.is_visible():
+                continue
 
-        if not path.startswith(
-            "/authors/"
-        ):
+            print(
+                "✓ Editor found: [contenteditable=\"true\"]",
+                flush=True
+            )
 
-            return False
+            try:
 
-        parts = [
-            x
-            for x in path.split("/")
-            if x
-        ]
+                editor.click(
+                    timeout=5000
+                )
 
-        if len(parts) < 3:
+            except Exception:
 
-            return False
+                print(
+                    "Normal editor click failed.",
+                    flush=True
+                )
 
-        if parts[0] != "authors":
+                print(
+                    "Using force click...",
+                    flush=True
+                )
 
-            return False
+                editor.click(
+                    force=True
+                )
 
-        if not parts[1]:
+            # Use keyboard insertion rather than relying
+            # on contenteditable.fill() compatibility.
 
-            return False
+            try:
 
-        if not parts[2]:
+                editor.fill(body)
 
-            return False
+            except Exception:
 
+                page.keyboard.insert_text(body)
+
+            print(
+                f"✓ Clean article inserted "
+                f"({len(body)} characters)",
+                flush=True
+            )
+
+            return True
+
+        except Exception as e:
+
+            print(
+                f"Editor attempt failed: {e}",
+                flush=True
+            )
+
+    print(
+        "❌ Content editor not found.",
+        flush=True
+    )
+
+    return False
+
+
+# ============================================================
+# THUMBNAIL
+# ============================================================
+
+def upload_thumbnail(page, image):
+
+    if not image:
+        print(
+            "No thumbnail available.",
+            flush=True
+        )
         return True
 
-    except Exception:
+    print()
+    print("=" * 60)
+    print(
+        "Uploading FIRST IMAGE as thumbnail"
+    )
+    print("=" * 60)
+
+    print(
+        f"Thumbnail file: {image}",
+        flush=True
+    )
+
+    # --------------------------------------------------------
+    # File inputs
+    # --------------------------------------------------------
+
+    inputs = page.locator(
+        'input[type="file"]'
+    )
+
+    print(
+        f"File inputs detected: {inputs.count()}",
+        flush=True
+    )
+
+    for i in range(inputs.count()):
+
+        try:
+
+            inp = inputs.nth(i)
+
+            print(
+                f"File input {i}: "
+                f"accept={inp.get_attribute('accept')} "
+                f"name={inp.get_attribute('name')}",
+                flush=True
+            )
+
+        except Exception:
+            pass
+
+    if inputs.count() == 0:
+
+        print(
+            "❌ No file input found.",
+            flush=True
+        )
 
         return False
 
-
-# ============================================================
-# VERIFY PUBLISHED PAGE
-# ============================================================
-
-def verify_published_page(
-    page,
-    expected_title
-):
-
-    print()
-    print(
-        "=" * 60
-    )
-
-    print(
-        "VERIFYING SEREY PUBLISHED URL"
-    )
-
-    print(
-        "=" * 60
-    )
-
-    deadline = time.time() + 30
-
-    published_url = None
-
-    while time.time() < deadline:
-
-        current_url = page.url
-
-        print(
-            "Current URL:",
-            current_url
-        )
-
-        if is_published_post_url(
-            current_url
-        ):
-
-            published_url = current_url
-
-            print(
-                "✓ Published URL detected:"
-            )
-
-            print(
-                published_url
-            )
-
-            break
-
-        page.wait_for_timeout(
-            1000
-        )
-
-    if not published_url:
-
-        print(
-            "✗ Published post URL was "
-            "not detected."
-        )
-
-        print(
-            "Expected format:"
-        )
-
-        print(
-            "https://serey.io/authors/"
-            "username/post-id"
-        )
-
-        return False, None
-
-    # --------------------------------------------------------
-    # Open published page
-    # --------------------------------------------------------
+    # Serey currently exposes one image input.
+    # That input is used for thumbnail.
 
     try:
 
+        inputs.first.set_input_files(
+            image
+        )
+
         print(
-            "Opening published post "
-            "for verification..."
-        )
-
-        page.goto(
-            published_url,
-            wait_until="domcontentloaded",
-            timeout=60000
-        )
-
-        page.wait_for_timeout(
-            3000
+            "✓ Thumbnail uploaded using single image input",
+            flush=True
         )
 
     except Exception as e:
 
         print(
-            f"⚠ Could not reload "
-            f"published page: {e}"
+            f"❌ Thumbnail upload failed: {e}",
+            flush=True
         )
 
-        return True, published_url
+        return False
 
-    final_url = page.url
+    # --------------------------------------------------------
+    # IMPORTANT: crop modal
+    # --------------------------------------------------------
 
-    print(
-        "Final published URL:",
-        final_url
-    )
-
-    if not is_published_post_url(
-        final_url
-    ):
+    if not handle_crop_modal(page):
 
         print(
-            "✗ Final URL is not a valid "
-            "Serey author post URL."
+            "❌ Thumbnail crop confirmation failed.",
+            flush=True
         )
 
-        return False, None
+        return False
 
-    body_text = ""
+    print(
+        "✓ Thumbnail crop confirmed",
+        flush=True
+    )
+
+    return True
+
+
+# ============================================================
+# CATEGORY
+# ============================================================
+
+def select_category(page, steem_category):
+
+    if not steem_category:
+        return False
+
+    print(
+        f"Steem category: {steem_category}",
+        flush=True
+    )
 
     try:
 
@@ -2163,132 +1206,581 @@ def verify_published_page(
             timeout=5000
         )
 
-        if not body_text.strip():
+        if "Your post belongs to category:" in body_text:
 
             print(
-                "✗ Published page body "
-                "is empty."
+                "Serey suggested category automatically.",
+                flush=True
             )
 
-            return False, None
+    except Exception:
+        pass
+
+    selectors = [
+        "text=Select category",
+        "text=Select Category"
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            loc = page.locator(selector)
+
+            if loc.count() == 0:
+                continue
+
+            for i in range(loc.count()):
+
+                item = loc.nth(i)
+
+                if not item.is_visible():
+                    continue
+
+                item.click(
+                    force=True
+                )
+
+                page.wait_for_timeout(800)
+
+                # Exact category
+                exact = page.get_by_text(
+                    steem_category,
+                    exact=True
+                )
+
+                for j in range(exact.count()):
+
+                    option = exact.nth(j)
+
+                    if option.is_visible():
+
+                        option.click(
+                            force=True
+                        )
+
+                        print(
+                            f"✓ Category selected: "
+                            f"{steem_category}",
+                            flush=True
+                        )
+
+                        return True
+
+                # role=option fallback
+                options = page.locator(
+                    '[role="option"]'
+                )
+
+                for j in range(options.count()):
+
+                    option = options.nth(j)
+
+                    try:
+
+                        if not option.is_visible():
+                            continue
+
+                        txt = option.inner_text().strip()
+
+                        if txt.lower() == steem_category.lower():
+
+                            option.click(
+                                force=True
+                            )
+
+                            print(
+                                f"✓ Category selected: {txt}",
+                                flush=True
+                            )
+
+                            return True
+
+                    except Exception:
+                        continue
+
+        except Exception:
+            continue
+
+    print(
+        "Category selection skipped.",
+        flush=True
+    )
+
+    return False
+
+
+# ============================================================
+# SUB CATEGORY
+# ============================================================
+
+def select_subcategory(page):
+
+    try:
+
+        selectors = [
+            "text=Select sub category",
+            "text=Select Sub Category",
+            "text=Select sub-category",
+            "text=Select Sub-category"
+        ]
+
+        for selector in selectors:
+
+            loc = page.locator(selector)
+
+            if loc.count() == 0:
+                continue
+
+            for i in range(loc.count()):
+
+                item = loc.nth(i)
+
+                if not item.is_visible():
+                    continue
+
+                item.click(
+                    force=True
+                )
+
+                page.wait_for_timeout(800)
+
+                options = page.locator(
+                    '[role="option"]'
+                )
+
+                for j in range(options.count()):
+
+                    option = options.nth(j)
+
+                    if option.is_visible():
+
+                        option.click(
+                            force=True
+                        )
+
+                        print(
+                            "✓ Sub Category selected.",
+                            flush=True
+                        )
+
+                        return True
 
         print(
-            "✓ Published page contains "
-            "visible content."
+            "No Sub Category available.",
+            flush=True
         )
 
     except Exception as e:
 
         print(
-            f"⚠ Could not inspect "
-            f"published page body: {e}"
+            f"Sub Category skipped: {e}",
+            flush=True
         )
 
-    if expected_title and body_text:
-
-        if (
-            expected_title.lower()
-            in body_text.lower()
-        ):
-
-            print(
-                "✓ Published title confirmed."
-            )
-
-        else:
-
-            print(
-                "⚠ Expected title was "
-                "not found in visible "
-                "page text."
-            )
-
-    print()
-    print(
-        "✓✓✓ PUBLISHED POST VERIFIED ✓✓✓"
-    )
-
-    print(
-        "Published URL:"
-    )
-
-    print(
-        published_url
-    )
-
-    return True, published_url
+    return False
 
 
 # ============================================================
-# PUBLISH ONE POST
+# DEBUG PAGE
 # ============================================================
 
-def publish_post(
-    page,
-    post
-):
+def save_debug(page):
 
-    title = (
-        post.get(
-            "title",
-            ""
-        ).strip()
-    )
+    try:
 
-    original_body = (
-        post.get(
-            "body",
-            ""
+        with open(
+            "serey_publish_debug.html",
+            "w",
+            encoding="utf-8"
+        ) as f:
+
+            f.write(
+                page.content()
+            )
+
+        page.screenshot(
+            path="serey_publish_debug.png",
+            full_page=True
         )
+
+        print(
+            "✓ Serey debug HTML and screenshot saved.",
+            flush=True
+        )
+
+    except Exception as e:
+
+        print(
+            f"Debug save failed: {e}",
+            flush=True
+        )
+
+
+# ============================================================
+# FIND PUBLISH BUTTON
+# ============================================================
+
+def find_publish_button(page):
+
+    # --------------------------------------------------------
+    # First: buttons
+    # --------------------------------------------------------
+
+    buttons = page.locator(
+        "button"
     )
 
-    first_image = get_first_image(
-        post
+    print(
+        f"Publish search: {buttons.count()} buttons detected",
+        flush=True
     )
 
-    article = clean_article(
-        original_body
-    )
+    for i in range(buttons.count()):
+
+        button = buttons.nth(i)
+
+        try:
+
+            if not button.is_visible():
+                continue
+
+            text = button.inner_text().strip()
+
+            aria = (
+                button.get_attribute("aria-label")
+                or ""
+            ).strip()
+
+            title = (
+                button.get_attribute("title")
+                or ""
+            ).strip()
+
+            data_testid = (
+                button.get_attribute("data-testid")
+                or ""
+            ).strip()
+
+            print(
+                f"Button {i}: "
+                f"text='{text}' "
+                f"aria='{aria}' "
+                f"title='{title}' "
+                f"testid='{data_testid}'",
+                flush=True
+            )
+
+        except Exception:
+            continue
+
+    # --------------------------------------------------------
+    # Exact button text
+    # --------------------------------------------------------
+
+    candidates = [
+        page.get_by_role(
+            "button",
+            name=re.compile(
+                r"^\s*Publish\s*$",
+                re.I
+            )
+        ),
+        page.get_by_text(
+            "Publish",
+            exact=True
+        )
+    ]
+
+    for locator in candidates:
+
+        try:
+
+            for i in range(locator.count()):
+
+                item = locator.nth(i)
+
+                if item.is_visible():
+
+                    print(
+                        "✓ Publish button found by text/role.",
+                        flush=True
+                    )
+
+                    return item
+
+        except Exception:
+            continue
+
+    # --------------------------------------------------------
+    # Button attributes
+    # --------------------------------------------------------
+
+    attribute_selectors = [
+        'button[aria-label*="publish" i]',
+        'button[title*="publish" i]',
+        'button[data-testid*="publish" i]',
+        '[role="button"][aria-label*="publish" i]',
+        '[role="button"][title*="publish" i]'
+    ]
+
+    for selector in attribute_selectors:
+
+        try:
+
+            loc = page.locator(selector)
+
+            for i in range(loc.count()):
+
+                item = loc.nth(i)
+
+                if item.is_visible():
+
+                    print(
+                        f"✓ Publish button found: {selector}",
+                        flush=True
+                    )
+
+                    return item
+
+        except Exception:
+            continue
+
+    # --------------------------------------------------------
+    # Search any visible element containing Publish
+    # --------------------------------------------------------
+
+    try:
+
+        elements = page.locator(
+            "button, [role='button'], a"
+        )
+
+        for i in range(elements.count()):
+
+            item = elements.nth(i)
+
+            if not item.is_visible():
+                continue
+
+            try:
+                txt = item.inner_text().strip()
+            except Exception:
+                txt = ""
+
+            if re.fullmatch(
+                r"publish",
+                txt,
+                re.I
+            ):
+
+                print(
+                    "✓ Publish button found by DOM fallback.",
+                    flush=True
+                )
+
+                return item
+
+    except Exception:
+        pass
+
+    return None
+
+
+# ============================================================
+# VERIFY PUBLISHED URL
+# ============================================================
+
+def is_published_post_url(url):
+
+    try:
+
+        parsed = urlparse(url)
+
+        host = (
+            parsed.netloc
+            .lower()
+            .split(":")[0]
+        )
+
+        allowed_hosts = {
+            "serey.io",
+            "www.serey.io",
+            "bengali.serey.io"
+        }
+
+        if host not in allowed_hosts:
+            return False
+
+        parts = [
+            x for x in parsed.path.split("/")
+            if x
+        ]
+
+        if len(parts) < 3:
+            return False
+
+        if parts[0].lower() != "authors":
+            return False
+
+        if not parts[1] or not parts[2]:
+            return False
+
+        return True
+
+    except Exception:
+
+        return False
+
+
+# ============================================================
+# VERIFY PUBLICATION
+# ============================================================
+
+def verify_published_page(page, expected_title):
 
     print()
+    print("=" * 60)
     print(
-        "=" * 60
+        "VERIFYING PUBLISHED POST..."
+    )
+    print("=" * 60)
+
+    for attempt in range(6):
+
+        page.wait_for_timeout(5000)
+
+        url = page.url
+
+        print(
+            f"Verification attempt {attempt + 1}:",
+            flush=True
+        )
+
+        print(
+            f"Current URL: {url}",
+            flush=True
+        )
+
+        if is_published_post_url(url):
+
+            print(
+                "✓ PUBLISHED AUTHOR URL FOUND!",
+                flush=True
+            )
+
+            # Reload to ensure it is actually accessible
+            try:
+
+                page.reload(
+                    wait_until="domcontentloaded",
+                    timeout=60000
+                )
+
+                page.wait_for_timeout(3000)
+
+            except Exception as e:
+
+                print(
+                    f"Reload warning: {e}",
+                    flush=True
+                )
+
+            try:
+
+                visible_text = page.locator(
+                    "body"
+                ).inner_text(
+                    timeout=10000
+                )
+
+                if visible_text.strip():
+
+                    print(
+                        "✓ Published page contains visible content.",
+                        flush=True
+                    )
+
+                    if expected_title.lower() in visible_text.lower():
+
+                        print(
+                            "✓ Published title confirmed.",
+                            flush=True
+                        )
+
+                    else:
+
+                        print(
+                            "⚠ Title not directly found, "
+                            "but published URL is valid.",
+                            flush=True
+                        )
+
+                    print(
+                        f"✓ VERIFIED URL: {page.url}",
+                        flush=True
+                    )
+
+                    return True, page.url
+
+            except Exception as e:
+
+                print(
+                    f"Published page content check failed: {e}",
+                    flush=True
+                )
+
+                # URL itself is still valid
+                return True, url
+
+    print(
+        "❌ Publication could not be verified.",
+        flush=True
+    )
+
+    return False, None
+
+
+# ============================================================
+# PUBLISH POST
+# ============================================================
+
+def publish_post(page, post):
+
+    print()
+    print("=" * 60)
+    print(
+        "Starting sync:"
+    )
+    print(
+        post["id"]
+    )
+    print("=" * 60)
+
+    print(
+        f"Title: {post['title']}",
+        flush=True
     )
 
     print(
-        "Publishing post"
+        f"Created: {post['created']}",
+        flush=True
     )
 
     print(
-        "=" * 60
+        f"Original/clean body length: "
+        f"{len(post['body'])}",
+        flush=True
     )
 
     print(
-        f"Title: {title}"
-    )
-
-    print(
-        f"Original body length: "
-        f"{len(original_body)}"
-    )
-
-    print(
-        f"Clean body length: "
-        f"{len(article)}"
-    )
-
-    print(
-        f"First image: "
-        f"{first_image}"
+        f"First image: {post.get('image')}",
+        flush=True
     )
 
     # --------------------------------------------------------
-    # Open write page
+    # OPEN WRITE PAGE
     # --------------------------------------------------------
-
-    print(
-        f"Write page: {NEW_POST}"
-    )
 
     page.goto(
         NEW_POST,
@@ -2296,412 +1788,459 @@ def publish_post(
         timeout=60000
     )
 
-    page.wait_for_timeout(
-        5000
+    page.wait_for_timeout(3000)
+
+    print(
+        f"Write page: {NEW_POST}",
+        flush=True
     )
 
     print(
-        "Current write URL:",
-        page.url
+        f"Current write URL: {page.url}",
+        flush=True
     )
 
     # --------------------------------------------------------
-    # Title
+    # TITLE
     # --------------------------------------------------------
 
-    title_box = find_title_box(
-        page
-    )
+    if not fill_title(
+        page,
+        post["title"]
+    ):
 
-    if not title_box:
+        save_debug(page)
 
-        raise RuntimeError(
-            "Serey title input not found."
-        )
-
-    title_box.click()
-
-    title_box.fill(
-        title
-    )
-
-    print(
-        "✓ Title filled"
-    )
-
-    # --------------------------------------------------------
-    # Editor
-    # --------------------------------------------------------
-
-    editor = find_editor(
-        page
-    )
-
-    if not editor:
-
-        raise RuntimeError(
-            "Serey content editor not found."
+        raise Exception(
+            "Serey title field not found."
         )
 
     # --------------------------------------------------------
-    # First image -> thumbnail
+    # BODY
     # --------------------------------------------------------
 
-    thumbnail_path = None
+    if not fill_article(
+        page,
+        post["body"]
+    ):
 
-    if first_image:
+        save_debug(page)
 
-        thumbnail_path = download_image(
-            first_image,
-            "steem_thumbnail"
+        raise Exception(
+            "Serey article editor not found."
         )
 
-    if thumbnail_path:
+    # --------------------------------------------------------
+    # THUMBNAIL
+    # --------------------------------------------------------
 
-        thumbnail_success = upload_thumbnail(
+    image = download_image(
+        post.get("image")
+    )
+
+    if image:
+
+        if not upload_thumbnail(
             page,
-            thumbnail_path
+            image
+        ):
+
+            save_debug(page)
+
+            raise Exception(
+                "Thumbnail upload/crop failed."
+            )
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # After thumbnail crop, make sure modal is gone.
+    # --------------------------------------------------------
+
+    if page.locator(
+        '[data-testid="cropper"]'
+    ).count() > 0:
+
+        print(
+            "Cropper still exists. Trying again...",
+            flush=True
         )
 
-        if not thumbnail_success:
+        if not handle_crop_modal(page):
 
-            raise RuntimeError(
-                "Thumbnail crop/upload "
-                "could not be completed."
+            save_debug(page)
+
+            raise Exception(
+                "Crop modal is still open."
+            )
+
+    print(
+        "✓ Ready to continue after thumbnail.",
+        flush=True
+    )
+
+    # --------------------------------------------------------
+    # FIRST PUBLISH / CONTINUE
+    # --------------------------------------------------------
+
+    print()
+    print(
+        "Searching for FIRST Publish / Continue button...",
+        flush=True
+    )
+
+    first_publish = find_publish_button(page)
+
+    if not first_publish:
+
+        print(
+            "No Publish button at first stage.",
+            flush=True
+        )
+
+        save_debug(page)
+
+        # Sometimes Serey exposes another Continue/Next
+        continue_candidates = [
+            page.get_by_role(
+                "button",
+                name=re.compile(
+                    r"^\s*(Continue|Next|Submit)\s*$",
+                    re.I
+                )
+            ),
+            page.get_by_text(
+                "Continue",
+                exact=True
+            ),
+            page.get_by_text(
+                "Next",
+                exact=True
+            )
+        ]
+
+        for locator in continue_candidates:
+
+            try:
+
+                for i in range(locator.count()):
+
+                    item = locator.nth(i)
+
+                    if item.is_visible():
+
+                        print(
+                            "✓ Continue/Next button found.",
+                            flush=True
+                        )
+
+                        item.click(
+                            force=True
+                        )
+
+                        page.wait_for_timeout(3000)
+
+                        first_publish = find_publish_button(
+                            page
+                        )
+
+                        break
+
+            except Exception:
+                continue
+
+            if first_publish:
+                break
+
+    if first_publish:
+
+        try:
+
+            print(
+                "✓ Clicking first Publish button...",
+                flush=True
+            )
+
+            first_publish.click(
+                force=True,
+                timeout=15000
+            )
+
+            print(
+                "✓ FIRST PUBLISH CLICKED",
+                flush=True
+            )
+
+            page.wait_for_timeout(3000)
+
+        except Exception as e:
+
+            print(
+                f"First Publish click failed: {e}",
+                flush=True
             )
 
     else:
 
         print(
-            "⚠ No thumbnail will be uploaded."
+            "No first-stage Publish/Continue found.",
+            flush=True
         )
 
     # --------------------------------------------------------
-    # Clean article
+    # CATEGORY
     # --------------------------------------------------------
 
-    type_article(
+    select_category(
         page,
-        editor,
-        article
-    )
-
-    page.wait_for_timeout(
-        2000
+        post.get("category", "")
     )
 
     # --------------------------------------------------------
-    # Publish
+    # SUB CATEGORY
     # --------------------------------------------------------
 
-    publish_button = find_publish_button(
+    select_subcategory(
         page
     )
 
-    if not publish_button:
-
-        print(
-            "✗ Publish button not found"
-        )
-
-        debug_page(
-            page,
-            "serey_publish_debug"
-        )
-
-        raise RuntimeError(
-            "Serey publish button not found."
-        )
-
-    print(
-        "✓ Publish button found"
-    )
-
-    try:
-
-        publish_button.scroll_into_view_if_needed()
-
-    except Exception:
-
-        pass
-
-    page.wait_for_timeout(
-        1000
-    )
-
-    try:
-
-        publish_button.click()
-
-    except Exception:
-
-        try:
-
-            publish_button.evaluate(
-                "(e) => e.click()"
-            )
-
-        except Exception as e:
-
-            raise RuntimeError(
-                f"Could not click publish: {e}"
-            )
-
-    print(
-        "✓ Publish button clicked"
-    )
-
     # --------------------------------------------------------
-    # REAL URL VERIFICATION
+    # FINAL PUBLISH
     # --------------------------------------------------------
-
-    verified, published_url = (
-        verify_published_page(
-            page,
-            title
-        )
-    )
-
-    if not verified:
-
-        print()
-        print(
-            "✗ PUBLICATION VERIFICATION FAILED"
-        )
-
-        debug_page(
-            page,
-            "serey_publish_verify_debug"
-        )
-
-        raise RuntimeError(
-            "Serey published URL "
-            "could not be verified."
-        )
-
-    return published_url
-
-
-# ============================================================
-# CLEAN TEMP FILES
-# ============================================================
-
-def cleanup_images():
 
     print()
     print(
-        "Cleaning temporary images..."
+        "=" * 60
+    )
+    print(
+        "Searching for FINAL Publish..."
+    )
+    print(
+        "=" * 60
     )
 
-    patterns = [
-        "steem_thumbnail.*",
-        "steem_image_*"
-    ]
+    page.wait_for_timeout(1500)
 
-    removed = set()
-
-    for pattern in patterns:
-
-        for path in Path(".").glob(
-            pattern
-        ):
-
-            if path in removed:
-
-                continue
-
-            try:
-
-                path.unlink()
-
-                removed.add(path)
-
-                print(
-                    f"Removed: "
-                    f"{path.name}"
-                )
-
-            except Exception as e:
-
-                print(
-                    f"Could not remove "
-                    f"{path.name}: {e}"
-                )
-
-
-# ============================================================
-# GET STEEM POSTS
-# ============================================================
-
-def get_posts():
-
-    cutoff = (
-        datetime.now(timezone.utc)
-        - timedelta(days=DAYS_TO_SYNC)
+    final_button = find_publish_button(
+        page
     )
 
-    all_posts = []
-
-    start_author = STEEM_USERNAME
-
-    start_permlink = ""
-
-    page_number = 1
-
-    while True:
+    if not final_button:
 
         print(
-            f"Steem page "
-            f"{page_number}: "
-            f"requesting 100 results"
+            "❌ FINAL Publish button not found.",
+            flush=True
         )
+
+        save_debug(page)
+
+        return False, None
+
+    try:
+
+        print(
+            "✓ FINAL Publish button found.",
+            flush=True
+        )
+
+        final_button.click(
+            force=True,
+            timeout=15000
+        )
+
+        print(
+            "✓ FINAL PUBLISH CLICKED",
+            flush=True
+        )
+
+    except Exception as e:
+
+        print(
+            f"Final Publish click failed: {e}",
+            flush=True
+        )
+
+        save_debug(page)
+
+        return False, None
+
+    # --------------------------------------------------------
+    # VERIFY
+    # --------------------------------------------------------
+
+    success, published_url = verify_published_page(
+        page,
+        post["title"]
+    )
+
+    if success:
+
+        print()
+        print(
+            "✓✓✓ POST SUCCESSFULLY PUBLISHED ✓✓✓",
+            flush=True
+        )
+
+        print(
+            f"Published URL: {published_url}",
+            flush=True
+        )
+
+        return True, published_url
+
+    print(
+        "❌ Publication verification failed.",
+        flush=True
+    )
+
+    save_debug(page)
+
+    return False, None
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
+def login(page):
+
+    print(
+        "Logging into Serey...",
+        flush=True
+    )
+
+    page.goto(
+        SEREY,
+        wait_until="domcontentloaded",
+        timeout=60000
+    )
+
+    page.wait_for_timeout(3000)
+
+    # Already logged in
+    if "/login" not in page.url.lower():
 
         try:
 
-            posts = steem_rpc(
-                "condenser_api.get_discussions_by_blog",
-                [{
-                    "tag": STEEM_USERNAME,
-                    "limit": 100,
-                    "start_author": start_author,
-                    "start_permlink": start_permlink
-                }]
-            )
+            text = page.locator(
+                "body"
+            ).inner_text()
 
-        except Exception as e:
-
-            print(
-                f"✗ Failed to get posts: "
-                f"{e}"
-            )
-
-            break
-
-        if not posts:
-
-            break
-
-        print(
-            f"Steem page "
-            f"{page_number}: "
-            f"{len(posts)} results"
-        )
-
-        reached_cutoff = False
-
-        for post in posts:
-
-            if post.get(
-                "author"
-            ) != STEEM_USERNAME:
-
-                continue
-
-            created_string = post.get(
-                "created"
-            )
-
-            if not created_string:
-
-                continue
-
-            try:
-
-                created_string = str(
-                    created_string
-                ).strip()
-
-                if created_string.endswith(
-                    "Z"
-                ):
-
-                    created = datetime.fromisoformat(
-                        created_string.replace(
-                            "Z",
-                            "+00:00"
-                        )
-                    )
-
-                elif "+" in created_string[10:]:
-
-                    created = datetime.fromisoformat(
-                        created_string
-                    )
-
-                else:
-
-                    created = datetime.fromisoformat(
-                        created_string
-                    ).replace(
-                        tzinfo=timezone.utc
-                    )
-
-            except Exception as e:
+            if (
+                "Log in" not in text
+                or "Logout" in text
+                or "Log out" in text
+            ):
 
                 print(
-                    f"⚠ Could not parse post date "
-                    f"{created_string}: {e}"
+                    f"After login URL: {page.url}",
+                    flush=True
                 )
 
-                continue
+        except Exception:
+            pass
 
-            if created.tzinfo is None:
-
-                created = created.replace(
-                    tzinfo=timezone.utc
-                )
-
-            else:
-
-                created = created.astimezone(
-                    timezone.utc
-                )
-
-            if created < cutoff:
-
-                reached_cutoff = True
-
-                continue
-
-            post["_created_dt"] = created
-
-            all_posts.append(
-                post
-            )
-
-        if reached_cutoff:
-
-            break
-
-        if len(posts) < 100:
-
-            break
-
-        last = posts[-1]
-
-        start_author = last.get(
-            "author"
-        )
-
-        start_permlink = last.get(
-            "permlink"
-        )
-
-        page_number += 1
-
-        if page_number > 100:
-
-            print(
-                "⚠ Pagination safety limit reached."
-            )
-
-            break
-
-    all_posts.sort(
-        key=lambda x: x["_created_dt"]
+    # Login button
+    login_buttons = page.locator(
+        'a:has-text("Log in"),'
+        'button:has-text("Log in"),'
+        'a:has-text("Log In"),'
+        'button:has-text("Log In")'
     )
 
-    return all_posts
+    if login_buttons.count() == 0:
+
+        print(
+            f"After login URL: {page.url}",
+            flush=True
+        )
+
+        print(
+            "✓ LOGGED INTO SEREY SUCCESSFULLY!",
+            flush=True
+        )
+
+        return True
+
+    try:
+
+        login_buttons.first.click(
+            force=True
+        )
+
+        page.wait_for_timeout(2500)
+
+    except Exception:
+
+        # Maybe already on a login page
+        pass
+
+    # Username
+    username = page.locator(
+        'input[placeholder*="Username" i]'
+    ).first
+
+    if username.count() == 0:
+
+        raise Exception(
+            "Serey Username field not found."
+        )
+
+    username.fill(
+        SEREY_LOGIN
+    )
+
+    # Private key/password
+    password = page.locator(
+        'input[placeholder*="Private Key" i],'
+        'input[type="password"]'
+    ).first
+
+    if password.count() == 0:
+
+        raise Exception(
+            "Serey password/private key field not found."
+        )
+
+    password.fill(
+        SEREY_PASSWORD
+    )
+
+    # Login submit
+    submit = page.locator(
+        'button:has-text("Log in"),'
+        'button:has-text("Log In"),'
+        'button[type="submit"]'
+    )
+
+    if submit.count() == 0:
+
+        raise Exception(
+            "Serey login button not found."
+        )
+
+    submit.last.click(
+        force=True
+    )
+
+    page.wait_for_timeout(6000)
+
+    print(
+        f"After login URL: {page.url}",
+        flush=True
+    )
+
+    if "/login" in page.url.lower():
+
+        raise Exception(
+            "Serey login failed."
+        )
+
+    print(
+        "✓ LOGGED INTO SEREY SUCCESSFULLY!",
+        flush=True
+    )
+
+    return True
 
 
 # ============================================================
@@ -2711,255 +2250,186 @@ def get_posts():
 def main():
 
     print()
-    print(
-        "=" * 60
-    )
-
+    print("=" * 60)
     print(
         "STEEM -> SEREY AUTO SYNC"
     )
+    print("=" * 60)
 
     print(
-        "=" * 60
+        f"• First image = thumbnail"
     )
 
     print(
-        "Mode:"
+        f"• Thumbnail crop = automatic"
     )
 
     print(
-        "• First image = thumbnail"
+        f"• Body images = removed"
     )
 
     print(
-        "• Thumbnail crop = automatic"
+        f"• Steem HTML/Markdown = cleaned"
     )
 
     print(
-        "• Body images = removed"
+        f"• Posts per run = {POSTS_PER_RUN}"
     )
 
     print(
-        "• Steem HTML/Markdown = cleaned"
+        f"• Sync period = {DAYS_TO_SYNC} days"
     )
 
     print(
-        "• Published URL = REQUIRED"
+        f"• Published URL = REQUIRED"
     )
 
     print(
-        "• Date handling = UTC SAFE"
+        f"• Date handling = UTC SAFE"
     )
 
-    print(
-        "=" * 60
-    )
+    print("=" * 60)
 
     synced = load_synced()
 
     print(
-        f"Previously synced: "
-        f"{len(synced)}"
+        f"Previously synced: {len(synced)}",
+        flush=True
     )
 
     posts = get_posts()
 
-    if not posts:
-
-        print(
-            "No posts found."
-        )
-
-        return
-
-    print()
-    print(
-        f"Total posts in last "
-        f"{DAYS_TO_SYNC} days: "
-        f"{len(posts)}"
-    )
+    new_posts = [
+        p for p in posts
+        if p["id"] not in synced
+    ]
 
     print(
-        "Oldest:",
-        posts[0].get("created"),
-        f"{posts[0].get('author')}/"
-        f"{posts[0].get('permlink')}"
+        f"Unsynced posts: {len(new_posts)}",
+        flush=True
     )
 
-    print(
-        "Newest:",
-        posts[-1].get("created"),
-        f"{posts[-1].get('author')}/"
-        f"{posts[-1].get('permlink')}"
-    )
-
-    unsynced = []
-
-    for post in posts:
-
-        post_id = (
-            f"{post.get('author')}/"
-            f"{post.get('permlink')}"
-        )
-
-        if post_id not in synced:
-
-            unsynced.append(
-                post
-            )
-
-    print(
-        f"Unsynced posts: "
-        f"{len(unsynced)}"
-    )
-
-    if not unsynced:
-
-        print(
-            "✓ All posts already synced."
-        )
-
-        return
-
-    selected = unsynced[
+    posts_to_run = new_posts[
         :POSTS_PER_RUN
     ]
 
-    print()
     print(
         f"Posts selected this run: "
-        f"{len(selected)}"
+        f"{len(posts_to_run)}",
+        flush=True
     )
 
-    for post in selected:
+    if not posts_to_run:
+
+        print(
+            "Nothing to publish.",
+            flush=True
+        )
+
+        return
+
+    for post in posts_to_run:
 
         print()
         print(
-            "-" * 60
+            f"Selected: {post['id']}",
+            flush=True
         )
 
         print(
-            f"Selected: "
-            f"{post.get('author')}/"
-            f"{post.get('permlink')}"
+            f"Created: {post['created']}",
+            flush=True
         )
 
         print(
-            f"Created: "
-            f"{post.get('created')}"
+            f"Title: {post['title']}",
+            flush=True
         )
 
-        print(
-            f"Title: "
-            f"{post.get('title')}"
-        )
+    with sync_playwright() as playwright:
 
-        print(
-            "-" * 60
-        )
-
-    with sync_playwright() as p:
-
-        browser = p.chromium.launch(
+        browser = playwright.chromium.launch(
             headless=True
         )
 
         context = browser.new_context(
             viewport={
-                "width": 1440,
-                "height": 1000
+                "width": 1280,
+                "height": 900
             },
-            locale="en-US"
+            user_agent=(
+                "Mozilla/5.0 "
+                "(Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            )
         )
 
         page = context.new_page()
 
         try:
 
-            if not login(page):
+            login(page)
 
-                raise RuntimeError(
-                    "Serey login failed."
-                )
-
-            for post in selected:
-
-                post_id = (
-                    f"{post.get('author')}/"
-                    f"{post.get('permlink')}"
-                )
-
-                print()
-                print(
-                    "=" * 60
-                )
-
-                print(
-                    "Starting sync:"
-                )
-
-                print(
-                    post_id
-                )
-
-                print(
-                    "=" * 60
-                )
+            for post in posts_to_run:
 
                 try:
 
-                    published_url = publish_post(
+                    success, published_url = publish_post(
                         page,
                         post
                     )
 
-                    if not published_url:
+                    if success and published_url:
 
-                        raise RuntimeError(
-                            "No published URL returned."
+                        # ONLY NOW mark as synced
+                        synced.add(
+                            post["id"]
                         )
 
-                    # ----------------------------------------
-                    # ONLY AFTER REAL URL VERIFICATION
-                    # ----------------------------------------
+                        save_synced(
+                            synced
+                        )
 
-                    synced.add(
-                        post_id
-                    )
+                        print()
+                        print(
+                            "=" * 60
+                        )
 
-                    save_synced(
-                        synced
-                    )
+                        print(
+                            f"✓ SAVED AS SYNCED: "
+                            f"{post['id']}"
+                        )
 
-                    print()
-                    print(
-                        "✓✓✓ SUCCESSFULLY SYNCED ✓✓✓"
-                    )
+                        print(
+                            f"✓ Published URL: "
+                            f"{published_url}"
+                        )
 
-                    print(
-                        f"Steem post: "
-                        f"{post_id}"
-                    )
+                        print(
+                            "=" * 60
+                        )
 
-                    print(
-                        "Serey published URL:"
-                    )
+                    else:
 
-                    print(
-                        published_url
-                    )
+                        print()
+                        print(
+                            f"⚠ FAILED: "
+                            f"{post['id']}"
+                        )
 
-                    print(
-                        f"Synced total: "
-                        f"{len(synced)}"
-                    )
+                        print(
+                            "⚠ This post will NOT be "
+                            "added to synced_posts.json."
+                        )
 
                 except Exception as e:
 
                     print()
                     print(
                         f"✗ FAILED TO SYNC: "
-                        f"{post_id}"
+                        f"{post['id']}"
                     )
 
                     print(
@@ -2967,44 +2437,38 @@ def main():
                     )
 
                     print(
-                        "⚠ This post will NOT "
-                        "be added to synced_posts.json."
+                        "⚠ This post will NOT be "
+                        "added to synced_posts.json."
                     )
-
-                    continue
 
         finally:
 
-            cleanup_images()
+            if os.path.exists(
+                TEMP_IMAGE
+            ):
 
-            try:
+                try:
 
-                context.close()
+                    os.remove(
+                        TEMP_IMAGE
+                    )
 
-            except Exception:
+                    print(
+                        "Removed temporary thumbnail.",
+                        flush=True
+                    )
 
-                pass
+                except Exception:
+                    pass
 
-            try:
-
-                browser.close()
-
-            except Exception:
-
-                pass
+            browser.close()
 
     print()
-    print(
-        "=" * 60
-    )
-
+    print("=" * 60)
     print(
         "RUN FINISHED"
     )
-
-    print(
-        "=" * 60
-    )
+    print("=" * 60)
 
 
 # ============================================================
@@ -3012,5 +2476,4 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
-
     main()
