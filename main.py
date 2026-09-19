@@ -76,14 +76,9 @@ def steem_rpc(method, params):
             data = response.json()
 
             if "error" in data:
+                raise RuntimeError(str(data["error"]))
 
-                raise RuntimeError(
-                    str(data["error"])
-                )
-
-            print(
-                f"✓ RPC success: {node}"
-            )
+            print(f"✓ RPC success: {node}")
 
             return data["result"]
 
@@ -91,13 +86,8 @@ def steem_rpc(method, params):
 
             last_error = e
 
-            print(
-                f"✗ RPC failed: {node}"
-            )
-
-            print(
-                f"  Reason: {e}"
-            )
+            print(f"✗ RPC failed: {node}")
+            print(f"  Reason: {e}")
 
     raise RuntimeError(
         f"All Steem RPC nodes failed. "
@@ -212,29 +202,19 @@ def extract_metadata_images(post):
                 []
             )
 
-            if isinstance(
-                meta_images,
-                str
-            ):
+            if isinstance(meta_images, str):
+                meta_images = [meta_images]
 
-                meta_images = [
-                    meta_images
-                ]
-
-            if isinstance(
-                meta_images,
-                list
-            ):
+            if isinstance(meta_images, list):
 
                 for url in meta_images:
 
                     if (
                         isinstance(url, str)
                         and url.startswith("http")
+                        and url not in images
                     ):
-
-                        if url not in images:
-                            images.append(url)
+                        images.append(url)
 
     except Exception:
         pass
@@ -267,7 +247,6 @@ def split_body_with_images(body):
         ]
 
         if text_part:
-
             parts.append(
                 ("text", text_part)
             )
@@ -286,7 +265,6 @@ def split_body_with_images(body):
     remaining = body[last:]
 
     if remaining:
-
         parts.append(
             ("text", remaining)
         )
@@ -318,9 +296,7 @@ def clean_post(body):
 
 def get_posts():
 
-    now = datetime.now(
-        timezone.utc
-    )
+    now = datetime.now(timezone.utc)
 
     cutoff = (
         now -
@@ -328,7 +304,6 @@ def get_posts():
     )
 
     posts = []
-
     seen_ids = set()
 
     start_author = STEEM_USERNAME
@@ -415,26 +390,20 @@ def get_posts():
 
                 if created_dt.tzinfo is None:
 
-                    created_dt = (
-                        created_dt.replace(
-                            tzinfo=timezone.utc
-                        )
+                    created_dt = created_dt.replace(
+                        tzinfo=timezone.utc
                     )
 
-                created_dt = (
-                    created_dt.astimezone(
-                        timezone.utc
-                    )
+                created_dt = created_dt.astimezone(
+                    timezone.utc
                 )
 
             except Exception:
-
                 continue
 
             if created_dt < cutoff:
 
                 reached_cutoff = True
-
                 continue
 
             posts.append({
@@ -474,7 +443,6 @@ def get_posts():
             and
             start_permlink == last_permlink
         ):
-
             break
 
         start_author = last_author
@@ -507,12 +475,7 @@ def detect_extension(
         content_type or ""
     ).lower()
 
-    if (
-        "jpeg" in content_type
-        or
-        "jpg" in content_type
-    ):
-
+    if "jpeg" in content_type or "jpg" in content_type:
         return ".jpg"
 
     if "png" in content_type:
@@ -527,16 +490,10 @@ def detect_extension(
     if "svg" in content_type:
         return ".svg"
 
-    if data.startswith(
-        b"\xff\xd8\xff"
-    ):
-
+    if data.startswith(b"\xff\xd8\xff"):
         return ".jpg"
 
-    if data.startswith(
-        b"\x89PNG"
-    ):
-
+    if data.startswith(b"\x89PNG"):
         return ".png"
 
     if (
@@ -544,13 +501,9 @@ def detect_extension(
         and
         b"WEBP" in data[:16]
     ):
-
         return ".webp"
 
-    if data.startswith(
-        b"GIF8"
-    ):
-
+    if data.startswith(b"GIF8"):
         return ".gif"
 
     url_path = (
@@ -583,10 +536,7 @@ def download_image(
 ):
 
     print()
-    print(
-        "Downloading image:"
-    )
-
+    print("Downloading image:")
     print(url)
 
     response = requests.get(
@@ -607,13 +557,11 @@ def download_image(
     data = response.content
 
     if not data:
-
         raise RuntimeError(
             "Downloaded image is empty."
         )
 
     if len(data) > MAX_IMAGE_SIZE:
-
         raise RuntimeError(
             "Image is larger than "
             f"{MAX_IMAGE_SIZE // (1024 * 1024)} MB."
@@ -651,9 +599,7 @@ def download_image(
 # DOWNLOAD ALL BODY IMAGES
 # ============================================================
 
-def download_body_images(
-    body_images
-):
+def download_body_images(body_images):
 
     downloaded = {}
 
@@ -668,18 +614,15 @@ def download_body_images(
 
         try:
 
-            downloaded[url] = (
-                download_image(
-                    url,
-                    index
-                )
+            downloaded[url] = download_image(
+                url,
+                index
             )
 
         except Exception as e:
 
             raise RuntimeError(
-                "Could not download "
-                "body image:\n"
+                "Could not download body image:\n"
                 f"{url}\n"
                 f"Reason: {e}"
             )
@@ -700,9 +643,7 @@ def download_body_images(
 def login(page):
 
     print()
-    print(
-        "Logging into Serey..."
-    )
+    print("Logging into Serey...")
 
     page.goto(
         SEREY,
@@ -710,7 +651,7 @@ def login(page):
         timeout=60000
     )
 
-    time.sleep(2)
+    time.sleep(3)
 
     login_selectors = [
         'a:has-text("Login")',
@@ -727,13 +668,9 @@ def login(page):
 
         try:
 
-            locator = page.locator(
-                selector
-            )
+            locator = page.locator(selector)
 
-            for i in range(
-                locator.count()
-            ):
+            for i in range(locator.count()):
 
                 item = locator.nth(i)
 
@@ -742,7 +679,6 @@ def login(page):
                     item.click()
 
                     clicked = True
-
                     break
 
             if clicked:
@@ -752,7 +688,7 @@ def login(page):
             continue
 
     if clicked:
-        time.sleep(2)
+        time.sleep(3)
 
     username_selectors = [
         'input[name="username"]',
@@ -768,20 +704,15 @@ def login(page):
 
         try:
 
-            locator = page.locator(
-                selector
-            )
+            locator = page.locator(selector)
 
-            for i in range(
-                locator.count()
-            ):
+            for i in range(locator.count()):
 
                 item = locator.nth(i)
 
                 if item.is_visible():
 
                     username_box = item
-
                     break
 
             if username_box:
@@ -812,20 +743,15 @@ def login(page):
 
         try:
 
-            locator = page.locator(
-                selector
-            )
+            locator = page.locator(selector)
 
-            for i in range(
-                locator.count()
-            ):
+            for i in range(locator.count()):
 
                 item = locator.nth(i)
 
                 if item.is_visible():
 
                     password_box = item
-
                     break
 
             if password_box:
@@ -857,13 +783,9 @@ def login(page):
 
         try:
 
-            locator = page.locator(
-                selector
-            )
+            locator = page.locator(selector)
 
-            for i in range(
-                locator.count()
-            ):
+            for i in range(locator.count()):
 
                 item = locator.nth(i)
 
@@ -872,7 +794,6 @@ def login(page):
                     item.click()
 
                     submitted = True
-
                     break
 
             if submitted:
@@ -883,11 +804,9 @@ def login(page):
 
     if not submitted:
 
-        password_box.press(
-            "Enter"
-        )
+        password_box.press("Enter")
 
-    time.sleep(4)
+    time.sleep(5)
 
     print(
         f"After login URL: {page.url}"
@@ -905,34 +824,130 @@ def login(page):
 
 
 # ============================================================
+# WAIT FOR WRITE PAGE
+# ============================================================
+
+def wait_for_write_page(page):
+
+    print()
+    print("Waiting for Serey editor to load...")
+
+    try:
+
+        page.wait_for_load_state(
+            "domcontentloaded",
+            timeout=30000
+        )
+
+    except Exception:
+        pass
+
+    # Wait for React/Vue/etc. to render
+    time.sleep(2)
+
+    # Try network idle but don't fail if Serey keeps requests open
+    try:
+
+        page.wait_for_load_state(
+            "networkidle",
+            timeout=15000
+        )
+
+    except Exception:
+        pass
+
+    time.sleep(2)
+
+    print(
+        f"Current write URL: {page.url}"
+    )
+
+
+# ============================================================
+# DEBUG PAGE FIELDS
+# ============================================================
+
+def debug_page_fields(page):
+
+    print()
+    print("Scanning Serey page fields...")
+
+    try:
+
+        inputs = page.locator(
+            "input, textarea"
+        )
+
+        count = inputs.count()
+
+        print(
+            f"Inputs/textareas found: {count}"
+        )
+
+        for i in range(count):
+
+            item = inputs.nth(i)
+
+            try:
+
+                print(
+                    f"Field {i}: "
+                    f"tag={item.evaluate('(el) => el.tagName')} "
+                    f"type={item.get_attribute('type')} "
+                    f"name={item.get_attribute('name')} "
+                    f"placeholder={item.get_attribute('placeholder')} "
+                    f"aria={item.get_attribute('aria-label')}"
+                )
+
+            except Exception:
+                pass
+
+    except Exception as e:
+
+        print(
+            f"Could not scan fields: {e}"
+        )
+
+
+# ============================================================
 # FIND TITLE
 # ============================================================
 
 def find_title_box(page):
 
     print()
-    print(
-        "Looking for Serey title field..."
-    )
+    print("Looking for Serey title field...")
 
     selectors = [
+
+        # Exact known selector
         'textarea[placeholder="Enter title..."]',
         'input[placeholder="Enter title..."]',
-        'textarea[placeholder*="Enter title" i]',
-        'input[placeholder*="Enter title" i]',
+
+        # Placeholder variations
+        'textarea[placeholder*="title" i]',
+        'input[placeholder*="title" i]',
+
+        # Names
         'textarea[name="title"]',
         'input[name="title"]',
+
+        # ARIA
         'textarea[aria-label*="title" i]',
         'input[aria-label*="title" i]',
+
+        # Common IDs/classes
+        '#title',
+        '.title-input',
+        '.post-title',
     ]
 
+    # First normal selector scan
     for selector in selectors:
 
         try:
 
-            count = page.locator(
-                selector
-            ).count()
+            count = page.locator(selector).count()
 
             print(
                 f"Checking: "
@@ -945,17 +960,148 @@ def find_title_box(page):
                     selector
                 ).nth(i)
 
-                if item.is_visible():
+                try:
+
+                    if item.is_visible():
+
+                        print(
+                            f"✓ Title field found: "
+                            f"{selector}"
+                        )
+
+                        return item
+
+                except Exception:
+                    pass
+
+        except Exception:
+            continue
+
+    # ========================================================
+    # Retry for dynamically loaded Serey editor
+    # ========================================================
+
+    print()
+    print(
+        "Title field not found yet. "
+        "Waiting for dynamic page..."
+    )
+
+    for attempt in range(1, 16):
+
+        print(
+            f"Title search attempt "
+            f"{attempt}/15"
+        )
+
+        time.sleep(2)
+
+        for selector in selectors:
+
+            try:
+
+                locator = page.locator(
+                    selector
+                )
+
+                count = locator.count()
+
+                for i in range(count):
+
+                    item = locator.nth(i)
+
+                    if item.is_visible():
+
+                        print(
+                            f"✓ Title field found "
+                            f"after waiting: "
+                            f"{selector}"
+                        )
+
+                        return item
+
+            except Exception:
+                continue
+
+    # ========================================================
+    # Generic fallback:
+    # Find visible input/textarea that is NOT password/file
+    # ========================================================
+
+    print()
+    print(
+        "Trying generic title-field detection..."
+    )
+
+    try:
+
+        locator = page.locator(
+            "input, textarea"
+        )
+
+        count = locator.count()
+
+        for i in range(count):
+
+            item = locator.nth(i)
+
+            try:
+
+                if not item.is_visible():
+                    continue
+
+                tag = item.evaluate(
+                    "(el) => el.tagName.toLowerCase()"
+                )
+
+                field_type = (
+                    item.get_attribute("type")
+                    or ""
+                ).lower()
+
+                placeholder = (
+                    item.get_attribute(
+                        "placeholder"
+                    )
+                    or ""
+                ).lower()
+
+                name = (
+                    item.get_attribute("name")
+                    or ""
+                ).lower()
+
+                if field_type in [
+                    "password",
+                    "file",
+                    "hidden"
+                ]:
+                    continue
+
+                if (
+                    "title" in placeholder
+                    or
+                    "title" in name
+                ):
 
                     print(
-                        f"✓ Title field found: "
-                        f"{selector}"
+                        "✓ Generic title field found"
                     )
 
                     return item
 
-        except Exception:
-            continue
+            except Exception:
+                continue
+
+    except Exception:
+        pass
+
+    print()
+    print(
+        "✗ Title field could not be found."
+    )
+
+    debug_page_fields(page)
 
     return None
 
@@ -968,38 +1114,47 @@ def find_editor(page):
 
     selectors = [
         '[contenteditable="true"]',
+        '.ProseMirror',
+        '[role="textbox"]',
         'textarea[placeholder="Enter content..."]',
         'textarea[placeholder*="Enter content" i]',
         'textarea[name="content"]',
         'textarea[placeholder*="content" i]',
-        '.ProseMirror',
     ]
 
-    for selector in selectors:
+    print()
+    print("Looking for content editor...")
 
-        try:
+    for attempt in range(1, 16):
 
-            locator = page.locator(
-                selector
-            )
+        for selector in selectors:
 
-            for i in range(
-                locator.count()
-            ):
+            try:
 
-                item = locator.nth(i)
+                locator = page.locator(selector)
 
-                if item.is_visible():
+                for i in range(locator.count()):
 
-                    print(
-                        f"✓ Editor found: "
-                        f"{selector}"
-                    )
+                    item = locator.nth(i)
 
-                    return item
+                    if item.is_visible():
 
-        except Exception:
-            continue
+                        print(
+                            f"✓ Editor found: "
+                            f"{selector}"
+                        )
+
+                        return item
+
+            except Exception:
+                continue
+
+        print(
+            f"Editor search attempt "
+            f"{attempt}/15"
+        )
+
+        time.sleep(1)
 
     return None
 
@@ -1016,9 +1171,7 @@ def get_file_inputs(page):
         'input[type="file"]'
     )
 
-    for i in range(
-        locator.count()
-    ):
+    for i in range(locator.count()):
 
         item = locator.nth(i)
 
@@ -1046,9 +1199,7 @@ def get_file_inputs(page):
 
 def print_file_inputs(page):
 
-    inputs = get_file_inputs(
-        page
-    )
+    inputs = get_file_inputs(page)
 
     print(
         f"File inputs detected: "
@@ -1077,324 +1228,63 @@ def upload_thumbnail(
 ):
 
     print()
-    print(
-        "Uploading thumbnail..."
-    )
+    print("Uploading thumbnail...")
 
-    inputs = print_file_inputs(
-        page
-    )
+    inputs = print_file_inputs(page)
 
     if not inputs:
 
         print(
-            "No thumbnail file input found."
+            "No file input currently visible."
         )
 
         return False
 
-    try:
-
-        inputs[0]["locator"].set_input_files(
-            image_path
-        )
-
-        print(
-            f"✓ Thumbnail selected: "
-            f"{image_path}"
-        )
-
-        time.sleep(1)
-
-        return True
-
-    except Exception as e:
-
-        print(
-            f"✗ Thumbnail upload failed: "
-            f"{e}"
-        )
-
-        return False
-
-
-# ============================================================
-# BODY IMAGE INPUT - DIAGNOSTIC VERSION
-# ============================================================
-
-def find_body_image_input(page):
-
-    print()
-    print(
-        "Searching for Serey image upload input..."
-    )
-
-    inputs = get_file_inputs(
-        page
-    )
-
-    print()
-    print(
-        f"Total file inputs detected: "
-        f"{len(inputs)}"
-    )
-
+    # Try first suitable image input
     for item in inputs:
 
-        print(
-            f"File input {item['index']}: "
-            f"accept={item['accept']} "
-            f"name={item['name']} "
-            f"multiple={item['multiple']}"
-        )
+        accept = (
+            item["accept"]
+            or ""
+        ).lower()
 
-    # --------------------------------------------------------
-    # TWO OR MORE INPUTS
-    # --------------------------------------------------------
-
-    if len(inputs) >= 2:
-
-        body_input = inputs[1]
-
-        print()
-        print(
-            "✓ Using second file input "
-            "as body image input."
-        )
-
-        print(
-            f"accept={body_input['accept']}"
-        )
-
-        print(
-            f"name={body_input['name']}"
-        )
-
-        print(
-            f"multiple={body_input['multiple']}"
-        )
-
-        return body_input["locator"]
-
-    # --------------------------------------------------------
-    # ONE INPUT
-    # --------------------------------------------------------
-
-    if len(inputs) == 1:
-
-        only_input = inputs[0]
-
-        print()
-        print(
-            "⚠ ONLY ONE FILE INPUT EXISTS."
-        )
-
-        print(
-            "Inspecting current Serey HTML..."
-        )
-
-        print()
-        print(
-            f"accept={only_input['accept']}"
-        )
-
-        print(
-            f"name={only_input['name']}"
-        )
-
-        print(
-            f"multiple={only_input['multiple']}"
-        )
-
-        try:
-
-            info = only_input.evaluate("""
-                (el) => ({
-                    outerHTML: el.outerHTML,
-                    parentHTML: el.parentElement
-                        ? el.parentElement.outerHTML
-                        : "",
-                    parentText: el.parentElement
-                        ? el.parentElement.innerText
-                        : ""
-                })
-            """)
-
-            print()
-            print(
-                "========== FILE INPUT HTML =========="
-            )
-
-            print(
-                info["outerHTML"][:5000]
-            )
-
-            print()
-            print(
-                "========== PARENT HTML =========="
-            )
-
-            print(
-                info["parentHTML"][:8000]
-            )
-
-            print()
-            print(
-                "========== PARENT TEXT =========="
-            )
-
-            print(
-                info["parentText"][:2000]
-            )
-
-        except Exception as e:
-
-            print(
-                f"Could not inspect "
-                f"file input: {e}"
-            )
-
-        # ----------------------------------------------------
-        # Check labels associated with the input
-        # ----------------------------------------------------
-
-        try:
-
-            input_id = only_input.get_attribute(
-                "id"
-            )
-
-            print()
-            print(
-                f"Input ID: {input_id}"
-            )
-
-            if input_id:
-
-                labels = page.locator(
-                    f'label[for="{input_id}"]'
-                )
-
-                print(
-                    f"Associated labels: "
-                    f"{labels.count()}"
-                )
-
-                for i in range(
-                    labels.count()
-                ):
-
-                    try:
-
-                        print(
-                            labels.nth(i).inner_text()
-                        )
-
-                    except Exception:
-                        pass
-
-        except Exception:
-            pass
-
-        print()
-        print(
-            "Body image uploader could not "
-            "yet be identified."
-        )
-
-        return None
-
-    # --------------------------------------------------------
-    # ZERO INPUTS
-    # --------------------------------------------------------
-
-    print()
-    print(
-        "✗ No input[type=file] exists "
-        "on the current page."
-    )
-
-    # --------------------------------------------------------
-    # Inspect buttons
-    # --------------------------------------------------------
-
-    try:
-
-        buttons = page.locator(
-            "button"
-        )
-
-        print()
-        print(
-            f"Total buttons: "
-            f"{buttons.count()}"
-        )
-
-        for i in range(
-            min(buttons.count(), 100)
+        if (
+            "image" in accept
+            or
+            accept == ""
         ):
-
-            button = buttons.nth(i)
 
             try:
 
-                if not button.is_visible():
-                    continue
-
-                text = (
-                    button.inner_text()
-                    .strip()
+                item["locator"].set_input_files(
+                    image_path
                 )
 
-                aria = button.get_attribute(
-                    "aria-label"
+                print(
+                    f"✓ Thumbnail selected "
+                    f"using file input "
+                    f"{item['index']}"
                 )
 
-                title = button.get_attribute(
-                    "title"
+                time.sleep(2)
+
+                return True
+
+            except Exception as e:
+
+                print(
+                    f"Thumbnail input "
+                    f"{item['index']} failed: {e}"
                 )
 
-                data_tooltip = (
-                    button.get_attribute(
-                        "data-tooltip"
-                    )
-                )
-
-                if (
-                    text
-                    or aria
-                    or title
-                    or data_tooltip
-                ):
-
-                    print(
-                        f"Button {i}: "
-                        f"text={text!r} "
-                        f"aria={aria!r} "
-                        f"title={title!r} "
-                        f"tooltip={data_tooltip!r}"
-                    )
-
-            except Exception:
-                continue
-
-    except Exception as e:
-
-        print(
-            f"Could not inspect buttons: "
-            f"{e}"
-        )
-
-    return None
+    return False
 
 
 # ============================================================
 # EDITOR IMAGE COUNT
 # ============================================================
 
-def editor_image_count(
-    editor
-):
+def editor_image_count(editor):
 
     try:
 
@@ -1418,9 +1308,7 @@ def editor_image_count(
 # EDITOR HTML
 # ============================================================
 
-def get_editor_html(
-    editor
-):
+def get_editor_html(editor):
 
     try:
 
@@ -1431,6 +1319,115 @@ def get_editor_html(
     except Exception:
 
         return ""
+
+
+# ============================================================
+# FIND BODY IMAGE INPUT
+# ============================================================
+
+def find_body_image_input(
+    page,
+    before_count
+):
+
+    inputs = print_file_inputs(page)
+
+    if not inputs:
+
+        print(
+            "No file input found."
+        )
+
+        return None
+
+    # ========================================================
+    # Prefer image input that is NOT obviously thumbnail
+    # ========================================================
+
+    candidates = []
+
+    for item in inputs:
+
+        accept = (
+            item["accept"]
+            or ""
+        ).lower()
+
+        name = (
+            item["name"]
+            or ""
+        ).lower()
+
+        if (
+            "image" in accept
+            or
+            accept == ""
+        ):
+
+            candidates.append(item)
+
+    print(
+        f"Possible image inputs: "
+        f"{len(candidates)}"
+    )
+
+    # If there are multiple inputs, body uploader is often
+    # the second one, but don't blindly assume it.
+    if len(candidates) >= 2:
+
+        item = candidates[1]
+
+        print(
+            f"✓ Trying body image input "
+            f"{item['index']}"
+        )
+
+        return item["locator"]
+
+    # ========================================================
+    # Try names related to body/content/editor/upload
+    # ========================================================
+
+    for item in candidates:
+
+        name = (
+            item["name"]
+            or ""
+        ).lower()
+
+        if any(
+            word in name
+            for word in [
+                "body",
+                "content",
+                "editor",
+                "upload",
+                "image"
+            ]
+        ):
+
+            print(
+                f"✓ Body image candidate: "
+                f"input {item['index']}"
+            )
+
+            return item["locator"]
+
+    # ========================================================
+    # Last fallback
+    # ========================================================
+
+    if candidates:
+
+        print(
+            f"✓ Using image input "
+            f"{candidates[-1]['index']} "
+            f"as fallback"
+        )
+
+        return candidates[-1]["locator"]
+
+    return None
 
 
 # ============================================================
@@ -1463,21 +1460,18 @@ def upload_body_image(
     )
 
     print(
-        f"Images in editor before "
-        f"upload: {before_count}"
+        f"Images in editor before upload: "
+        f"{before_count}"
     )
 
     try:
-
         editor.click()
-
     except Exception:
         pass
 
-    body_input = (
-        find_body_image_input(
-            page
-        )
+    body_input = find_body_image_input(
+        page,
+        before_count
     )
 
     if not body_input:
@@ -1494,22 +1488,18 @@ def upload_body_image(
         )
 
         print(
-            "✓ Body image selected "
-            "using detected file input."
+            "✓ Body image selected"
         )
 
     except Exception as e:
 
         raise RuntimeError(
-            "Could not select body "
-            f"image: {e}"
+            "Could not select body image: "
+            f"{e}"
         )
 
-    # --------------------------------------------------------
-    # Wait for image insertion
-    # --------------------------------------------------------
-
-    for second in range(20):
+    # Wait for upload/insertion
+    for second in range(1, 21):
 
         time.sleep(1)
 
@@ -1550,39 +1540,9 @@ def upload_body_image(
             return True
 
         print(
-            f"Waiting for image insertion..."
-            f" {second + 1}/20"
+            f"Waiting for image upload "
+            f"{second}/20..."
         )
-
-    print()
-    print(
-        "✗ Body image upload was "
-        "not verified."
-    )
-
-    print(
-        f"Images before: "
-        f"{before_count}"
-    )
-
-    print(
-        f"Images after: "
-        f"{editor_image_count(editor)}"
-    )
-
-    print()
-    print(
-        "Current editor HTML:"
-    )
-
-    try:
-
-        print(
-            get_editor_html(editor)[:10000]
-        )
-
-    except Exception:
-        pass
 
     raise RuntimeError(
         "Serey body image upload "
@@ -1641,9 +1601,7 @@ def fill_body_with_uploaded_images(
     downloaded_images
 ):
 
-    parts = split_body_with_images(
-        body
-    )
+    parts = split_body_with_images(body)
 
     has_images = any(
         part_type == "image"
@@ -1676,9 +1634,7 @@ def fill_body_with_uploaded_images(
                 f"Could not fill body: {e}"
             )
 
-        print(
-            "✓ Body filled"
-        )
+        print("✓ Body filled")
 
         return
 
@@ -1696,13 +1652,9 @@ def fill_body_with_uploaded_images(
 
             editor.click()
 
-            page.keyboard.press(
-                "Control+A"
-            )
+            page.keyboard.press("Control+A")
 
-            page.keyboard.press(
-                "Backspace"
-            )
+            page.keyboard.press("Backspace")
 
     except Exception:
         pass
@@ -1724,9 +1676,7 @@ def fill_body_with_uploaded_images(
             image_number += 1
 
             image_path = (
-                downloaded_images.get(
-                    value
-                )
+                downloaded_images.get(value)
             )
 
             if not image_path:
@@ -1772,26 +1722,26 @@ def find_publish_button(page):
         'button[type="submit"]',
     ]
 
-    for selector in selectors:
+    for attempt in range(1, 11):
 
-        try:
+        for selector in selectors:
 
-            locator = page.locator(
-                selector
-            )
+            try:
 
-            for i in range(
-                locator.count()
-            ):
+                locator = page.locator(selector)
 
-                item = locator.nth(i)
+                for i in range(locator.count()):
 
-                if item.is_visible():
+                    item = locator.nth(i)
 
-                    return item
+                    if item.is_visible():
 
-        except Exception:
-            continue
+                        return item
+
+            except Exception:
+                continue
+
+        time.sleep(1)
 
     return None
 
@@ -1832,9 +1782,7 @@ def verify_publish(page):
                 exact=False
             )
 
-            for i in range(
-                locator.count()
-            ):
+            for i in range(locator.count()):
 
                 if locator.nth(i).is_visible():
 
@@ -1867,11 +1815,7 @@ def publish(
 
     print()
     print("=" * 60)
-
-    print(
-        "Publishing post"
-    )
-
+    print("Publishing post")
     print("=" * 60)
 
     print(
@@ -1883,6 +1827,10 @@ def publish(
         f"{len(body)} characters"
     )
 
+    # ========================================================
+    # OPEN WRITE PAGE
+    # ========================================================
+
     page.goto(
         NEW_POST,
         wait_until="domcontentloaded",
@@ -1893,11 +1841,13 @@ def publish(
         f"Write page: {page.url}"
     )
 
-    time.sleep(2)
+    wait_for_write_page(page)
 
-    title_box = find_title_box(
-        page
-    )
+    # ========================================================
+    # TITLE
+    # ========================================================
+
+    title_box = find_title_box(page)
 
     if not title_box:
 
@@ -1905,17 +1855,27 @@ def publish(
             "Serey title input not found."
         )
 
-    title_box.fill(
-        title
-    )
+    try:
 
-    print(
-        "✓ Title filled"
-    )
+        title_box.click()
 
-    editor = find_editor(
-        page
-    )
+        title_box.fill("")
+
+        title_box.fill(title)
+
+    except Exception as e:
+
+        raise RuntimeError(
+            f"Could not fill title: {e}"
+        )
+
+    print("✓ Title filled")
+
+    # ========================================================
+    # EDITOR
+    # ========================================================
+
+    editor = find_editor(page)
 
     if not editor:
 
@@ -1924,11 +1884,11 @@ def publish(
             "not found."
         )
 
-    body_images = (
-        extract_body_images(
-            body
-        )
-    )
+    # ========================================================
+    # BODY IMAGES
+    # ========================================================
+
+    body_images = extract_body_images(body)
 
     print(
         f"Images found in post: "
@@ -1945,12 +1905,20 @@ def publish(
             )
         )
 
+    # ========================================================
+    # BODY
+    # ========================================================
+
     fill_body_with_uploaded_images(
         page,
         editor,
         body,
         downloaded_images
     )
+
+    # ========================================================
+    # THUMBNAIL
+    # ========================================================
 
     thumbnail_path = None
 
@@ -1995,10 +1963,12 @@ def publish(
             thumbnail_path
         )
 
+    # ========================================================
+    # PUBLISH
+    # ========================================================
+
     publish_button = (
-        find_publish_button(
-            page
-        )
+        find_publish_button(page)
     )
 
     if not publish_button:
@@ -2008,32 +1978,30 @@ def publish(
         )
 
     print()
-    print(
-        "Clicking Publish..."
-    )
+    print("Clicking Publish...")
 
     publish_button.click()
 
     time.sleep(3)
 
+    # ========================================================
+    # CONFIRM DIALOG
+    # ========================================================
+
     confirmation_selectors = [
         'button:has-text("Confirm")',
         'button:has-text("confirm")',
+        'button:has-text("Yes")',
+        'button:has-text("Publish")',
     ]
 
-    for selector in (
-        confirmation_selectors
-    ):
+    for selector in confirmation_selectors:
 
         try:
 
-            locator = page.locator(
-                selector
-            )
+            locator = page.locator(selector)
 
-            for i in range(
-                locator.count()
-            ):
+            for i in range(locator.count()):
 
                 item = locator.nth(i)
 
@@ -2056,9 +2024,11 @@ def publish(
         except Exception:
             pass
 
-    if not verify_publish(
-        page
-    ):
+    # ========================================================
+    # VERIFY
+    # ========================================================
+
+    if not verify_publish(page):
 
         raise RuntimeError(
             "Publish could not be verified."
