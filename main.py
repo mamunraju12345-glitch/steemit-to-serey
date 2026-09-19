@@ -87,13 +87,12 @@ def save_synced(data):
 
 
 # ============================================================
-# EXTRACT FIRST IMAGE AS THUMBNAIL
+# EXTRACT THUMBNAIL
 # ============================================================
 
 def extract_thumbnail_and_body(body, metadata):
     thumbnail = None
 
-    # 1. Metadata image
     try:
         meta = json.loads(metadata or "{}")
         for x in meta.get("image", []):
@@ -103,19 +102,16 @@ def extract_thumbnail_and_body(body, metadata):
     except Exception:
         pass
 
-    # 2. First Markdown image
     if not thumbnail:
         m = re.search(r'!\[[^\]]*\]\((https?://[^)\s]+)', body, re.I)
         if m:
             thumbnail = m.group(1)
 
-    # 3. First HTML img
     if not thumbnail:
         m = re.search(r'<img[^>]+src=["\'](https?://[^"\'>\s]+)', body, re.I)
         if m:
             thumbnail = m.group(1)
 
-    # 4. Direct image link
     if not thumbnail:
         m = re.search(r'(https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?)', body, re.I)
         if m:
@@ -126,7 +122,7 @@ def extract_thumbnail_and_body(body, metadata):
 
 
 # ============================================================
-# GET STEEM POSTS (LAST 1 YEAR -> OLDEST TO NEWEST)
+# GET STEEM POSTS (LAST 1 YEAR)
 # ============================================================
 
 def parse_steem_date(date_str):
@@ -294,33 +290,21 @@ def login(page):
 def verify(page, title):
     print("VERIFYING PUBLISHED POST...", flush=True)
 
-    author_slug = SEREY_LOGIN.lower()
-
-    for step in range(10):
-        page.wait_for_timeout(4000)
+    for step in range(12):
+        page.wait_for_timeout(3000)
         url = page.url
-        print(f"Check {step+1}/10 - Current URL: {url}", flush=True)
+        print(f"Check {step+1}/12 - Current URL: {url}", flush=True)
 
-        # ১. URL চেক: /authors/ এর পর ইউজারনেম এবং পোস্ট আইডি এসেছে কিনা
-        if f"/authors/{author_slug}" in url.lower() or (f"/authors/" in url and "/blog/post/new" not in url):
-            print(f"✓ SUCCESS: POST PUBLISHED AND REDIRECTED TO AUTHOR POST URL: {url}", flush=True)
+        if "/authors/" in url.lower() and "/blog/post/new" not in url:
+            print(f"✓ SUCCESS: POST PUBLISHED AND REDIRECTED! Final URL: {url}", flush=True)
             return True
 
-        # ২. সাকসেস নোটিফিকেশন চেক
         try:
             if page.locator('text="Successfully posted your article"').is_visible():
-                print("✓ SUCCESS MESSAGE DETECTED ON SCREEN!", flush=True)
+                print("✓ SUCCESS MESSAGE DETECTED!", flush=True)
                 return True
         except:
             pass
-
-    # কোনো এরর থাকলে লগ প্রিন্ট করা
-    try:
-        errors = page.locator('.ant-message-error, .ant-form-item-explain-error, .error').all_inner_texts()
-        if errors:
-            print(f"⚠️ Form Alert Errors: {errors}", flush=True)
-    except:
-        pass
 
     print("❌ Publication could not be verified.", flush=True)
     return False
@@ -363,76 +347,100 @@ def publish(page, post):
         try:
             file_input = page.locator('input[type="file"]').first
             file_input.set_input_files(downloaded_img)
-            print("✓ Thumbnail set, waiting 10s for Serey server upload...", flush=True)
+            print("✓ Cover Thumbnail uploaded! Waiting 10s for upload...", flush=True)
             page.wait_for_timeout(10000)
         except Exception as e:
             print(f"❌ Thumbnail upload failed: {e}")
 
-    # 4. FIRST PUBLISH (Opens Modal)
-    print("Clicking first Publish button...", flush=True)
-    page.locator(
-        'button:has-text("Publish"), div[role="button"]:has-text("Publish"), span:has-text("Publish")'
-    ).last.click(force=True)
+    # 4. FIRST PUBLISH (OPENS MODAL WITH RETRY)
+    print("Attempting to click first Publish button to trigger modal...", flush=True)
+    modal_opened = False
 
-    page.wait_for_timeout(4000)
+    for attempt in range(4):
+        # ক্লিক করা
+        try:
+            page.evaluate('''() => {
+                const btns = Array.from(document.querySelectorAll('button, a, div[role="button"], span'));
+                for (let b of btns) {
+                    if (b.innerText && b.innerText.trim().toLowerCase() === 'publish' && b.offsetParent !== null) {
+                        b.click();
+                        break;
+                    }
+                }
+            }''')
+        except Exception:
+            pass
 
-    # 5. MODAL DETECTION & MANDATORY CATEGORY SELECTION
-    modal = page.locator('div[role="dialog"], .ant-modal-content, .modal-content').last
+        page.wait_for_timeout(3000)
+
+        # চেক করা ড্রপডাউন সহ মডাল ওপেন হয়েছে কিনা
+        select_test = page.locator('.ant-modal-content .ant-select, div[role="dialog"] .ant-select, .ant-select-selector:visible')
+        if select_test.count() > 0:
+            print(f"✓ Real Publish Modal detected with {select_test.count()} dropdown(s)!", flush=True)
+            modal_opened = True
+            break
+        else:
+            print(f"Retrying first Publish click (attempt {attempt+1})...", flush=True)
+            try:
+                page.locator('button:has-text("Publish"), div[role="button"]:has-text("Publish")').last.click(force=True)
+            except:
+                pass
+            page.wait_for_timeout(3000)
+
+    # 5. SELECT CATEGORY IN MODAL
+    page.wait_for_timeout(2000)
     try:
-        modal.wait_for(state="visible", timeout=10000)
-        print("✓ Modal detected successfully!", flush=True)
-    except Exception:
-        print("Modal wait continuing...", flush=True)
-
-    # ক্যাটাগরি নিশ্চিতভাবে নির্বাচন করা
-    try:
-        select_boxes = modal.locator('.ant-select-selector, .ant-select, [role="combobox"]')
-        total_selects = select_boxes.count()
-        print(f"Found {total_selects} category dropdown(s) in modal.", flush=True)
-
-        if total_selects > 0:
-            select_boxes.first.click(force=True)
+        # ড্রপডাউনে ক্লিক করা
+        select_btn = page.locator('.ant-modal-content .ant-select-selector, div[role="dialog"] .ant-select-selector, .ant-select-selector:visible').first
+        if select_btn.is_visible():
+            select_btn.click(force=True)
             page.wait_for_timeout(1500)
 
-            # ড্রপডাউন অপশন থেকে প্রথম ক্যাটাগরি ক্লিক করা
-            options = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) [role="option"], .ant-select-item-option')
-            if options.count() > 0:
-                opt_txt = options.first.inner_text().strip()
-                options.first.click(force=True)
-                print(f"✓ Category selected in modal: {opt_txt}", flush=True)
-                page.wait_for_timeout(1000)
-
-        # সাব-ক্যাটাগরি থাকলে সিলেক্ট করা
-        if total_selects > 1:
-            select_boxes.nth(1).click(force=True)
-            page.wait_for_timeout(1500)
-            sub_opts = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) [role="option"], .ant-select-item-option')
-            if sub_opts.count() > 0:
-                sub_opts.first.click(force=True)
-                print("✓ Subcategory selected in modal.", flush=True)
+            # অপশন থেকে প্রথম ক্যাটাগরি সিলেক্ট করা
+            first_opt = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, [role="option"]:visible').first
+            if first_opt.is_visible():
+                opt_name = first_opt.inner_text().strip()
+                first_opt.click(force=True)
+                print(f"✓ Category successfully selected: {opt_name}", flush=True)
                 page.wait_for_timeout(1000)
     except Exception as e:
-        print(f"Category selection log: {e}", flush=True)
+        print(f"Category selection note: {e}", flush=True)
 
-    # 6. FINAL PUBLISH BUTTON (INSIDE MODAL)
-    print("Clicking final Modal Publish button...", flush=True)
-    modal_button = modal.locator(
-        'button:has-text("Publish"), '
-        'button.ant-btn-primary, '
-        'button:has-text("Confirm"), '
-        'button:has-text("Submit")'
-    ).last
+    # 6. FINAL PUBLISH BUTTON INSIDE MODAL
+    print("Clicking final Submit button inside modal...", flush=True)
+    page.wait_for_timeout(2000)
 
-    # বাটন সক্রিয় (Enabled) হওয়া পর্যন্ত অপেক্ষা
-    for _ in range(8):
-        if modal_button.is_enabled():
-            break
-        page.wait_for_timeout(1000)
+    # মডালের আসল কনফার্ম বাটনে ক্লিক
+    try:
+        page.evaluate('''() => {
+            const modal = document.querySelector('.ant-modal-content, div[role="dialog"], .modal-content');
+            if (modal) {
+                const btns = Array.from(modal.querySelectorAll('button'));
+                const submitBtn = btns.find(b => b.innerText && (b.innerText.trim().toLowerCase() === 'publish' || b.innerText.trim().toLowerCase() === 'submit' || b.innerText.trim().toLowerCase() === 'confirm'));
+                if (submitBtn) {
+                    submitBtn.removeAttribute('disabled');
+                    submitBtn.click();
+                }
+            }
+        }''')
+        print("✓ Executed JS Click on Final Modal Publish button!", flush=True)
+    except Exception as e:
+        print(f"JS final click error: {e}", flush=True)
 
-    modal_button.click(force=True)
-    print("✓ FINAL MODAL PUBLISH CLICKED!", flush=True)
+    # ব্যাকআপ প্লে-রাইট ক্লিক
+    try:
+        modal_btn = page.locator(
+            '.ant-modal-content button:has-text("Publish"), '
+            'div[role="dialog"] button:has-text("Publish"), '
+            'button.ant-btn-primary'
+        ).last
+        if modal_btn.is_visible():
+            modal_btn.click(force=True)
+            print("✓ Playwright Final Click executed!", flush=True)
+    except Exception:
+        pass
 
-    page.wait_for_timeout(12000)
+    page.wait_for_timeout(10000)
 
     if downloaded_img and os.path.exists(downloaded_img):
         try:
