@@ -4,8 +4,10 @@ import re
 import time
 import mimetypes
 from datetime import datetime, timedelta, timezone
+
 import requests
 from playwright.sync_api import sync_playwright
+
 
 # ============================================================
 # SETTINGS
@@ -20,14 +22,17 @@ SEREY_LOGIN = os.environ.get(
 
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-SEREY = "https://serey.io"
+# IMPORTANT:
+# This sync is for Bengali Serey.
+SEREY = "https://bengali.serey.io"
 NEW_POST = f"{SEREY}/blog/post/new"
 
 SYNC_FILE = "synced_posts.json"
-TEMP_IMAGE_PREFIX = "temp_image"
 
 POSTS_PER_RUN = 1
 DAYS_LIMIT = 365
+
+TEMP_IMAGE_PREFIX = "temp_image"
 
 STEEM_NODES = [
     "https://api.steemit.com",
@@ -51,17 +56,28 @@ def rpc(method, params):
 
     for node in STEEM_NODES:
         try:
-            r = requests.post(node, json=payload, timeout=20)
+            r = requests.post(
+                node,
+                json=payload,
+                timeout=20
+            )
+
             r.raise_for_status()
+
             data = r.json()
 
             if "error" in data:
                 raise Exception(data["error"])
 
+            print(f"✓ RPC success: {node}", flush=True)
+
             return data["result"]
 
         except Exception as e:
-            print(f"RPC {node} failed: {e}", flush=True)
+            print(
+                f"RPC {node} failed: {e}",
+                flush=True
+            )
 
     raise Exception("All Steem RPC nodes failed")
 
@@ -71,184 +87,424 @@ def rpc(method, params):
 # ============================================================
 
 def load_synced():
+
     if not os.path.exists(SYNC_FILE):
         return set()
 
     try:
-        with open(SYNC_FILE, encoding="utf-8") as f:
-            return set(json.load(f))
-    except Exception:
+        with open(
+            SYNC_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            data = json.load(f)
+
+        if isinstance(data, list):
+            return set(data)
+
+        return set()
+
+    except Exception as e:
+
+        print(
+            f"⚠ Could not read {SYNC_FILE}: {e}",
+            flush=True
+        )
+
         return set()
 
 
 def save_synced(data):
-    with open(SYNC_FILE, "w", encoding="utf-8") as f:
-        json.dump(sorted(data), f, ensure_ascii=False, indent=2)
+
+    temp_file = SYNC_FILE + ".tmp"
+
+    with open(
+        temp_file,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            sorted(data),
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    os.replace(
+        temp_file,
+        SYNC_FILE
+    )
 
 
 # ============================================================
-# EXTRACT THUMBNAIL
+# THUMBNAIL + BODY
 # ============================================================
 
 def extract_thumbnail_and_body(body, metadata):
+
     thumbnail = None
 
+    # --------------------------------------------------------
+    # Try Steem metadata image
+    # --------------------------------------------------------
+
     try:
-        meta = json.loads(metadata or "{}")
-        for x in meta.get("image", []):
-            if isinstance(x, str) and x.startswith("http"):
-                thumbnail = x
-                break
+
+        meta = json.loads(
+            metadata or "{}"
+        )
+
+        images = meta.get(
+            "image",
+            []
+        )
+
+        if isinstance(images, list):
+
+            for x in images:
+
+                if (
+                    isinstance(x, str)
+                    and x.startswith("http")
+                ):
+
+                    thumbnail = x
+                    break
+
     except Exception:
         pass
 
+    # --------------------------------------------------------
+    # Markdown image
+    # --------------------------------------------------------
+
     if not thumbnail:
-        m = re.search(r'!\[[^\]]*\]\((https?://[^)\s]+)', body, re.I)
+
+        m = re.search(
+            r'!\[[^\]]*\]\((https?://[^)\s]+)',
+            body,
+            re.I
+        )
+
         if m:
             thumbnail = m.group(1)
 
+    # --------------------------------------------------------
+    # HTML image
+    # --------------------------------------------------------
+
     if not thumbnail:
-        m = re.search(r'<img[^>]+src=["\'](https?://[^"\'>\s]+)', body, re.I)
+
+        m = re.search(
+            r'<img[^>]+src=["\']'
+            r'(https?://[^"\'>\s]+)',
+            body,
+            re.I
+        )
+
         if m:
             thumbnail = m.group(1)
 
+    # --------------------------------------------------------
+    # Generic image URL
+    # --------------------------------------------------------
+
     if not thumbnail:
-        m = re.search(r'(https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?)', body, re.I)
+
+        m = re.search(
+            r'(https?://\S+\.(?:jpg|jpeg|png|gif|webp)'
+            r'(?:\?\S*)?)',
+            body,
+            re.I
+        )
+
         if m:
             thumbnail = m.group(1)
 
-    body = re.sub(r'\n{4,}', '\n\n', body)
+    body = re.sub(
+        r'\n{4,}',
+        '\n\n',
+        body
+    )
+
     return body.strip(), thumbnail
 
 
 # ============================================================
-# GET STEEM POSTS (LAST 1 YEAR)
+# STEEM DATE
 # ============================================================
 
 def parse_steem_date(date_str):
+
     try:
-        return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+
+        return datetime.strptime(
+            date_str,
+            "%Y-%m-%dT%H:%M:%S"
+        ).replace(
+            tzinfo=timezone.utc
+        )
+
     except Exception:
+
         return None
 
 
-def get_posts():
-    print(f"Collecting posts from @{STEEM_USERNAME} for the last {DAYS_LIMIT} days...", flush=True)
+# ============================================================
+# GET STEEM POSTS
+# ============================================================
 
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=DAYS_LIMIT)
-    print(f"Post cut-off date: {cutoff_date.strftime('%Y-%m-%d')}", flush=True)
+def get_posts():
+
+    print(
+        f"Collecting posts from @{STEEM_USERNAME} "
+        f"for the last {DAYS_LIMIT} days...",
+        flush=True
+    )
+
+    cutoff_date = (
+        datetime.now(timezone.utc)
+        - timedelta(days=DAYS_LIMIT)
+    )
+
+    print(
+        f"Post cut-off date: "
+        f"{cutoff_date.strftime('%Y-%m-%d')}",
+        flush=True
+    )
 
     posts = []
     seen = set()
+
     start_author = None
     start_permlink = None
-    reached_older_than_limit = False
 
-    while len(posts) < 5000 and not reached_older_than_limit:
+    reached_old = False
+
+    while (
+        len(posts) < 5000
+        and not reached_old
+    ):
+
         params = {
             "tag": STEEM_USERNAME,
             "limit": 100
         }
 
         if start_author:
+
             params["start_author"] = start_author
             params["start_permlink"] = start_permlink
 
-        result = rpc("condenser_api.get_discussions_by_blog", params)
+        result = rpc(
+            "condenser_api.get_discussions_by_blog",
+            params
+        )
+
         if not result:
             break
 
-        batch = result[1:] if start_author else result
+        batch = (
+            result[1:]
+            if start_author
+            else result
+        )
+
         if not batch:
             break
 
         for p in batch:
+
             if p.get("author") != STEEM_USERNAME:
                 continue
 
-            author = p.get("author", "")
-            permlink = p.get("permlink", "")
+            author = p.get(
+                "author",
+                ""
+            )
+
+            permlink = p.get(
+                "permlink",
+                ""
+            )
+
             if not permlink:
                 continue
 
-            pid = f"{author}/{permlink}"
-            if pid in seen:
-                continue
-
-            created_str = p.get("created", "")
-            created_dt = parse_steem_date(created_str)
-
-            if created_dt and created_dt < cutoff_date:
-                reached_older_than_limit = True
-                break
-
-            seen.add(pid)
-
-            body, thumbnail = extract_thumbnail_and_body(
-                p.get("body", ""),
-                p.get("json_metadata", "{}")
+            post_id = (
+                f"{author}/{permlink}"
             )
 
-            posts.append({
-                "id": pid,
-                "title": p.get("title", "").strip(),
-                "body": body,
-                "thumbnail": thumbnail,
-                "created": created_str,
-                "category": p.get("category", "")
-            })
+            if post_id in seen:
+                continue
+
+            created_str = p.get(
+                "created",
+                ""
+            )
+
+            created_dt = parse_steem_date(
+                created_str
+            )
+
+            if (
+                created_dt
+                and created_dt < cutoff_date
+            ):
+
+                reached_old = True
+                break
+
+            seen.add(post_id)
+
+            body, thumbnail = (
+                extract_thumbnail_and_body(
+                    p.get("body", ""),
+                    p.get("json_metadata", "{}")
+                )
+            )
+
+            posts.append(
+                {
+                    "id": post_id,
+                    "title": p.get(
+                        "title",
+                        ""
+                    ).strip(),
+
+                    "body": body,
+
+                    "thumbnail": thumbnail,
+
+                    "created": created_str,
+
+                    "category": p.get(
+                        "category",
+                        ""
+                    )
+                }
+            )
 
         last = result[-1]
-        new_author = last.get("author")
-        new_permlink = last.get("permlink")
 
-        if new_author == start_author and new_permlink == start_permlink:
+        new_author = last.get(
+            "author"
+        )
+
+        new_permlink = last.get(
+            "permlink"
+        )
+
+        if (
+            new_author == start_author
+            and new_permlink == start_permlink
+        ):
             break
 
         start_author = new_author
         start_permlink = new_permlink
 
-        if len(result) < 100 or reached_older_than_limit:
+        if (
+            len(result) < 100
+            or reached_old
+        ):
             break
 
         time.sleep(0.3)
 
+    # oldest -> newest
     posts.reverse()
-    print(f"Total posts collected from the last {DAYS_LIMIT} days: {len(posts)}", flush=True)
+
+    print(
+        f"Total posts collected from the last "
+        f"{DAYS_LIMIT} days: {len(posts)}",
+        flush=True
+    )
+
     return posts
 
 
 # ============================================================
-# DOWNLOAD THUMBNAIL
+# DOWNLOAD IMAGE
 # ============================================================
 
 def download_image(url):
+
     if not url:
         return None
 
     try:
-        print(f"Downloading cover thumbnail: {url}", flush=True)
+
+        print(
+            f"Downloading cover thumbnail: {url}",
+            flush=True
+        )
+
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://steemit.com/"
+            "User-Agent":
+                "Mozilla/5.0 "
+                "(Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36",
+            "Referer":
+                "https://steemit.com/"
         }
-        r = requests.get(url, timeout=25, headers=headers)
+
+        r = requests.get(
+            url,
+            timeout=25,
+            headers=headers
+        )
+
         r.raise_for_status()
 
-        content_type = r.headers.get("content-type", "").lower()
-        ext = mimetypes.guess_extension(content_type.split(";")[0]) or ".jpg"
+        content_type = (
+            r.headers
+            .get(
+                "content-type",
+                ""
+            )
+            .lower()
+        )
+
+        ext = (
+            mimetypes.guess_extension(
+                content_type.split(";")[0]
+            )
+            or ".jpg"
+        )
+
         if ext == ".jpe":
             ext = ".jpg"
 
-        file_path = f"{TEMP_IMAGE_PREFIX}{ext}"
-        with open(file_path, "wb") as f:
+        file_path = (
+            f"{TEMP_IMAGE_PREFIX}{ext}"
+        )
+
+        with open(
+            file_path,
+            "wb"
+        ) as f:
+
             f.write(r.content)
 
-        print(f"✓ Cover image saved: {file_path}", flush=True)
+        print(
+            f"✓ Cover image saved: "
+            f"{file_path} "
+            f"({len(r.content)} bytes)",
+            flush=True
+        )
+
         return file_path
 
     except Exception as e:
-        print(f"❌ Cover image download failed: {e}", flush=True)
+
+        print(
+            f"❌ Cover image download failed: {e}",
+            flush=True
+        )
+
         return None
 
 
@@ -257,198 +513,1808 @@ def download_image(url):
 # ============================================================
 
 def login(page):
-    print("Logging into Serey...", flush=True)
 
-    page.goto(SEREY, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(4000)
+    print(
+        "Logging into Serey...",
+        flush=True
+    )
 
-    login_btn = page.locator(
-        'a:has-text("Log in"), button:has-text("Log in"), a:has-text("Log In"), button:has-text("Log In")'
-    ).first
+    page.goto(
+        SEREY,
+        wait_until="domcontentloaded",
+        timeout=60000
+    )
 
-    if login_btn.count() > 0 and login_btn.is_visible():
-        login_btn.click(force=True)
-        page.wait_for_timeout(3000)
+    page.wait_for_timeout(5000)
 
-        user_in = page.locator('input[placeholder*="Username" i], input[type="text"]').first
-        pass_in = page.locator('input[placeholder*="Private Key" i], input[placeholder*="Password" i], input[type="password"]').first
+    print(
+        f"After login URL: {page.url}",
+        flush=True
+    )
 
-        user_in.fill(SEREY_LOGIN)
-        pass_in.fill(SEREY_PASSWORD)
+    # --------------------------------------------------------
+    # Check if already logged in
+    # --------------------------------------------------------
 
-        page.locator('button:has-text("Log in"), button:has-text("Log In")').last.click(force=True)
-        page.wait_for_timeout(7000)
-        print("✓ LOGGED INTO SEREY SUCCESSFULLY!", flush=True)
-    else:
-        print("Already logged in or login button not found.", flush=True)
+    login_buttons = page.locator(
+        'a:has-text("Log in"), '
+        'button:has-text("Log in"), '
+        'a:has-text("Log In"), '
+        'button:has-text("Log In")'
+    )
 
-
-# ============================================================
-# VERIFY (TARGETS: /authors/<username>/<post-id>)
-# ============================================================
-
-def verify(page, title):
-    print("VERIFYING PUBLISHED POST...", flush=True)
-
-    for step in range(12):
-        page.wait_for_timeout(3000)
-        url = page.url
-        print(f"Check {step+1}/12 - Current URL: {url}", flush=True)
-
-        if "/authors/" in url.lower() and "/blog/post/new" not in url:
-            print(f"✓ SUCCESS: POST PUBLISHED AND REDIRECTED! Final URL: {url}", flush=True)
-            return True
+    if (
+        login_buttons.count() > 0
+        and login_buttons.first.is_visible()
+    ):
 
         try:
-            if page.locator('text="Successfully posted your article"').is_visible():
-                print("✓ SUCCESS MESSAGE DETECTED!", flush=True)
-                return True
-        except:
+
+            login_buttons.first.click(
+                force=True,
+                timeout=15000
+            )
+
+            page.wait_for_timeout(3000)
+
+        except Exception as e:
+
+            print(
+                f"Login button click note: {e}",
+                flush=True
+            )
+
+        user_in = page.locator(
+            'input[placeholder*="Username" i], '
+            'input[type="text"]'
+        ).first
+
+        pass_in = page.locator(
+            'input[placeholder*="Private Key" i], '
+            'input[placeholder*="Password" i], '
+            'input[type="password"]'
+        ).first
+
+        user_in.wait_for(
+            state="visible",
+            timeout=20000
+        )
+
+        pass_in.wait_for(
+            state="visible",
+            timeout=20000
+        )
+
+        user_in.fill(
+            SEREY_LOGIN
+        )
+
+        pass_in.fill(
+            SEREY_PASSWORD
+        )
+
+        page.locator(
+            'button:has-text("Log in"), '
+            'button:has-text("Log In")'
+        ).last.click(
+            force=True,
+            timeout=20000
+        )
+
+        page.wait_for_timeout(7000)
+
+    else:
+
+        print(
+            "✓ Login fields not visible; "
+            "checking whether already logged in.",
+            flush=True
+        )
+
+    print(
+        f"After login URL: {page.url}",
+        flush=True
+    )
+
+    print(
+        "✓ LOGGED INTO SEREY SUCCESSFULLY!",
+        flush=True
+    )
+
+
+# ============================================================
+# URL HELPERS
+# ============================================================
+
+def normalize_url(url):
+
+    if not url:
+        return None
+
+    url = str(url).strip()
+
+    if not url:
+        return None
+
+    if url.startswith("//"):
+        url = "https:" + url
+
+    elif url.startswith("/"):
+        url = SEREY + url
+
+    elif not url.startswith("http"):
+        return None
+
+    return url.split("#")[0]
+
+
+def is_real_post_url(url):
+
+    url = normalize_url(url)
+
+    if not url:
+        return False
+
+    try:
+
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+
+        host = (
+            parsed.netloc
+            .lower()
+            .split(":")[0]
+        )
+
+        path = (
+            parsed.path
+            .rstrip("/")
+        )
+
+        # Must be Serey
+        if not (
+            host == "serey.io"
+            or host == "www.serey.io"
+            or host.endswith(".serey.io")
+        ):
+            return False
+
+        # Never accept these
+        bad_parts = [
+            "/blog/post/new",
+            "/my-activity",
+            "/activity",
+            "/profile",
+            "/posts",
+            "/followers",
+            "/following",
+            "/login",
+            "/register"
+        ]
+
+        lower_path = path.lower()
+
+        for bad in bad_parts:
+
+            if bad in lower_path:
+                return False
+
+        # Expected:
+        # /authors/username/post-id
+        m = re.match(
+            r"^/authors/([^/]+)/([^/]+)$",
+            path,
+            re.I
+        )
+
+        if not m:
+            return False
+
+        username = (
+            m.group(1)
+            .replace("@", "")
+            .lower()
+        )
+
+        post_id = (
+            m.group(2)
+            .lower()
+        )
+
+        expected_user = (
+            SEREY_LOGIN
+            .replace("@", "")
+            .lower()
+        )
+
+        if username != expected_user:
+            return False
+
+        bad_ids = {
+            "my-activity",
+            "activity",
+            "profile",
+            "posts",
+            "followers",
+            "following",
+            "write",
+            "new"
+        }
+
+        if post_id in bad_ids:
+            return False
+
+        return True
+
+    except Exception:
+        return False
+
+
+# ============================================================
+# NETWORK CAPTURE
+# ============================================================
+
+class NetworkCapture:
+
+    def __init__(self):
+
+        self.responses = []
+
+    def attach(self, page):
+
+        def on_response(response):
+
+            try:
+
+                url = response.url
+
+                method = (
+                    response.request.method
+                    if response.request
+                    else ""
+                )
+
+                status = response.status
+
+                # We are especially interested in POST/PUT/PATCH
+                # API calls after Publish.
+                if (
+                    method.upper()
+                    in {
+                        "POST",
+                        "PUT",
+                        "PATCH"
+                    }
+                    or "/api/" in url.lower()
+                    or "global-api" in url.lower()
+                ):
+
+                    item = {
+                        "url": url,
+                        "method": method,
+                        "status": status,
+                        "text": ""
+                    }
+
+                    try:
+
+                        content_type = (
+                            response.headers
+                            .get(
+                                "content-type",
+                                ""
+                            )
+                            .lower()
+                        )
+
+                        if (
+                            "json" in content_type
+                            or "/api/" in url.lower()
+                        ):
+
+                            try:
+
+                                item["text"] = (
+                                    response.text()
+                                )[:20000]
+
+                            except Exception:
+                                pass
+
+                    except Exception:
+                        pass
+
+                    self.responses.append(item)
+
+            except Exception:
+                pass
+
+        page.on(
+            "response",
+            on_response
+        )
+
+
+# ============================================================
+# EXTRACT URLS FROM ANY TEXT
+# ============================================================
+
+def extract_urls_from_text(text):
+
+    found = []
+
+    if not text:
+        return found
+
+    # Full URLs
+    urls = re.findall(
+        r'https?://[^\s"\'<>]+',
+        text,
+        re.I
+    )
+
+    for url in urls:
+
+        url = url.rstrip(
+            ".,;:)]}'\""
+        )
+
+        if is_real_post_url(url):
+            found.append(url)
+
+    return found
+
+
+def collect_urls_from_json(obj):
+
+    found = []
+
+    if obj is None:
+        return found
+
+    if isinstance(obj, str):
+
+        found.extend(
+            extract_urls_from_text(obj)
+        )
+
+        # Possible relative URL
+        matches = re.findall(
+            r'["\'](\/authors\/[^"\']+)["\']',
+            obj,
+            re.I
+        )
+
+        for x in matches:
+
+            candidate = normalize_url(x)
+
+            if is_real_post_url(candidate):
+                found.append(candidate)
+
+        return found
+
+    if isinstance(obj, dict):
+
+        for key, value in obj.items():
+
+            key_lower = str(
+                key
+            ).lower()
+
+            # Common URL-like fields
+            if any(
+                word in key_lower
+                for word in [
+                    "url",
+                    "link",
+                    "slug",
+                    "permalink",
+                    "post",
+                    "article"
+                ]
+            ):
+
+                if isinstance(
+                    value,
+                    str
+                ):
+
+                    candidate = (
+                        normalize_url(value)
+                    )
+
+                    if is_real_post_url(
+                        candidate
+                    ):
+                        found.append(
+                            candidate
+                        )
+
+                    found.extend(
+                        extract_urls_from_text(
+                            value
+                        )
+                    )
+
+            found.extend(
+                collect_urls_from_json(
+                    value
+                )
+            )
+
+        return found
+
+    if isinstance(obj, list):
+
+        for item in obj:
+
+            found.extend(
+                collect_urls_from_json(
+                    item
+                )
+            )
+
+    return found
+
+
+# ============================================================
+# API RESPONSE ANALYSIS
+# ============================================================
+
+def analyze_network_responses(capture):
+
+    print(
+        "",
+        flush=True
+    )
+
+    print(
+        "=" * 60,
+        flush=True
+    )
+
+    print(
+        "PUBLISH NETWORK RESPONSES",
+        flush=True
+    )
+
+    print(
+        "=" * 60,
+        flush=True
+    )
+
+    real_urls = []
+
+    for i, item in enumerate(
+        capture.responses
+    ):
+
+        url = item.get(
+            "url",
+            ""
+        )
+
+        method = item.get(
+            "method",
+            ""
+        )
+
+        status = item.get(
+            "status",
+            ""
+        )
+
+        text = item.get(
+            "text",
+            ""
+        )
+
+        print(
+            f"[{i+1}] "
+            f"{method} "
+            f"{status} "
+            f"{url}",
+            flush=True
+        )
+
+        # Only print useful API body
+        if text:
+
+            compact = re.sub(
+                r"\s+",
+                " ",
+                text
+            )
+
+            print(
+                f"    RESPONSE: "
+                f"{compact[:1500]}",
+                flush=True
+            )
+
+            real_urls.extend(
+                extract_urls_from_text(
+                    text
+                )
+            )
+
+            try:
+
+                data = json.loads(
+                    text
+                )
+
+                real_urls.extend(
+                    collect_urls_from_json(
+                        data
+                    )
+                )
+
+            except Exception:
+                pass
+
+    # unique
+    result = []
+
+    for url in real_urls:
+
+        if (
+            url not in result
+            and is_real_post_url(url)
+        ):
+            result.append(url)
+
+    print(
+        "=" * 60,
+        flush=True
+    )
+
+    if result:
+
+        print(
+            "✓ REAL POST URL FOUND IN API:",
+            flush=True
+        )
+
+        for url in result:
+            print(
+                url,
+                flush=True
+            )
+
+    else:
+
+        print(
+            "No real post URL found in API responses.",
+            flush=True
+        )
+
+    print(
+        "=" * 60,
+        flush=True
+    )
+
+    return result
+
+
+# ============================================================
+# PAGE LINKS
+# ============================================================
+
+def find_real_post_links(page):
+
+    urls = []
+
+    try:
+
+        links = page.locator(
+            'a[href]'
+        )
+
+        count = min(
+            links.count(),
+            500
+        )
+
+        for i in range(count):
+
+            try:
+
+                href = links.nth(i).get_attribute(
+                    "href"
+                )
+
+                candidate = normalize_url(
+                    href
+                )
+
+                if is_real_post_url(
+                    candidate
+                ):
+
+                    if candidate not in urls:
+                        urls.append(candidate)
+
+            except Exception:
+                continue
+
+    except Exception:
+        pass
+
+    return urls
+
+
+# ============================================================
+# VERIFY REAL POST PAGE
+# ============================================================
+
+def verify_real_post_page(
+    page,
+    url,
+    title
+):
+
+    if not is_real_post_url(url):
+        return False
+
+    print(
+        f"Verifying candidate post URL: {url}",
+        flush=True
+    )
+
+    try:
+
+        page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=30000
+        )
+
+        page.wait_for_timeout(
+            5000
+        )
+
+        final_url = page.url
+
+        print(
+            f"Verification URL: {final_url}",
+            flush=True
+        )
+
+        if not is_real_post_url(
+            final_url
+        ):
+
+            print(
+                "❌ Candidate URL failed URL validation.",
+                flush=True
+            )
+
+            return False
+
+        body_text = ""
+
+        try:
+
+            body_text = page.locator(
+                "body"
+            ).inner_text(
+                timeout=10000
+            )
+
+        except Exception:
             pass
 
-    print("❌ Publication could not be verified.", flush=True)
+        title_clean = (
+            title.strip()
+            .lower()
+        )
+
+        body_clean = (
+            body_text.strip()
+            .lower()
+        )
+
+        if (
+            title_clean
+            and title_clean in body_clean
+        ):
+
+            print(
+                "✓ REAL PUBLISHED POST VERIFIED!",
+                flush=True
+            )
+
+            print(
+                f"✓ URL: {final_url}",
+                flush=True
+            )
+
+            return True
+
+        # Sometimes title may be slightly transformed.
+        # Require a meaningful portion.
+        words = [
+            x
+            for x in re.findall(
+                r"\w+",
+                title_clean
+            )
+            if len(x) >= 4
+        ]
+
+        if words:
+
+            matched = sum(
+                1
+                for word in words[:8]
+                if word in body_clean
+            )
+
+            if matched >= max(
+                2,
+                min(4, len(words))
+            ):
+
+                print(
+                    "✓ REAL POST VERIFIED "
+                    "(partial title match).",
+                    flush=True
+                )
+
+                print(
+                    f"✓ URL: {final_url}",
+                    flush=True
+                )
+
+                return True
+
+        print(
+            "❌ URL exists but post title "
+            "could not be verified.",
+            flush=True
+        )
+
+        return False
+
+    except Exception as e:
+
+        print(
+            f"❌ Post page verification failed: {e}",
+            flush=True
+        )
+
+        return False
+
+
+# ============================================================
+# SEARCH ACTIVITY ONLY FOR REAL LINK
+# ============================================================
+
+def search_activity_for_post(
+    page,
+    title
+):
+
+    activity_url = (
+        f"{SEREY}/authors/"
+        f"{SEREY_LOGIN}/my-activity"
+    )
+
+    print(
+        "Checking profile activity for a real post link...",
+        flush=True
+    )
+
+    try:
+
+        page.goto(
+            activity_url,
+            wait_until="domcontentloaded",
+            timeout=30000
+        )
+
+        page.wait_for_timeout(
+            5000
+        )
+
+        links = find_real_post_links(
+            page
+        )
+
+        if links:
+
+            print(
+                "Real post links found in activity:",
+                flush=True
+            )
+
+            for link in links:
+
+                print(
+                    link,
+                    flush=True
+                )
+
+            # Return only a REAL post URL.
+            return links
+
+        print(
+            "No real post link found in activity.",
+            flush=True
+        )
+
+        return []
+
+    except Exception as e:
+
+        print(
+            f"Activity search failed: {e}",
+            flush=True
+        )
+
+        return []
+
+
+# ============================================================
+# WAIT FOR MODALS
+# ============================================================
+
+def close_crop_modal(page):
+
+    try:
+
+        modals = page.locator(
+            ".ant-modal-wrap:visible"
+        )
+
+        count = modals.count()
+
+        if count == 0:
+            return
+
+        for i in range(count):
+
+            modal = modals.nth(i)
+
+            try:
+
+                text = modal.inner_text(
+                    timeout=1000
+                ).lower()
+
+            except Exception:
+                text = ""
+
+            # Cropper-related modal
+            if (
+                "crop" in text
+                or modal.locator(
+                    '[data-testid="cropper"]'
+                ).count() > 0
+            ):
+
+                buttons = modal.locator(
+                    "button"
+                )
+
+                for j in range(
+                    buttons.count()
+                ):
+
+                    try:
+
+                        btn = buttons.nth(j)
+
+                        if not btn.is_visible():
+                            continue
+
+                        txt = (
+                            btn.inner_text()
+                            .strip()
+                            .lower()
+                        )
+
+                        if txt in {
+                            "ok",
+                            "confirm",
+                            "done",
+                            "save"
+                        }:
+
+                            print(
+                                "✓ Confirming image crop...",
+                                flush=True
+                            )
+
+                            btn.click(
+                                force=True
+                            )
+
+                            page.wait_for_timeout(
+                                2000
+                            )
+
+                            return
+
+                    except Exception:
+                        continue
+
+    except Exception:
+        pass
+
+
+def wait_for_modal_close(
+    page,
+    seconds=5
+):
+
+    end = (
+        time.time()
+        + seconds
+    )
+
+    while time.time() < end:
+
+        try:
+
+            visible = page.locator(
+                ".ant-modal-wrap:visible"
+            ).count()
+
+            if visible == 0:
+                return True
+
+        except Exception:
+            return True
+
+        page.wait_for_timeout(
+            300
+        )
+
     return False
 
 
 # ============================================================
-# PUBLISH POST
+# FIND PUBLISH BUTTONS
+# ============================================================
+
+def visible_publish_buttons(page):
+
+    result = []
+
+    selectors = [
+        'button',
+        '[role="button"]',
+        'a'
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            loc = page.locator(
+                selector
+            )
+
+            count = min(
+                loc.count(),
+                300
+            )
+
+            for i in range(count):
+
+                try:
+
+                    el = loc.nth(i)
+
+                    if not el.is_visible():
+                        continue
+
+                    txt = (
+                        el.inner_text()
+                        .strip()
+                        .lower()
+                    )
+
+                    if txt == "publish":
+
+                        result.append(
+                            el
+                        )
+
+                except Exception:
+                    continue
+
+        except Exception:
+            continue
+
+    return result
+
+
+# ============================================================
+# CLICK FIRST PUBLISH
+# ============================================================
+
+def click_first_publish(page):
+
+    print(
+        "Attempting to click first Publish...",
+        flush=True
+    )
+
+    for attempt in range(5):
+
+        close_crop_modal(
+            page
+        )
+
+        page.wait_for_timeout(
+            1000
+        )
+
+        buttons = visible_publish_buttons(
+            page
+        )
+
+        print(
+            f"Publish buttons detected: "
+            f"{len(buttons)}",
+            flush=True
+        )
+
+        if buttons:
+
+            btn = buttons[0]
+
+            try:
+
+                btn.scroll_into_view_if_needed(
+                    timeout=5000
+                )
+
+            except Exception:
+                pass
+
+            # Normal click first
+            try:
+
+                btn.click(
+                    timeout=10000
+                )
+
+                print(
+                    "✓ First Publish clicked normally.",
+                    flush=True
+                )
+
+                page.wait_for_timeout(
+                    3000
+                )
+
+                if page.locator(
+                    ".ant-modal-wrap:visible"
+                ).count() > 0:
+
+                    return True
+
+            except Exception as e:
+
+                print(
+                    f"Normal click failed: {e}",
+                    flush=True
+                )
+
+            # Force fallback
+            try:
+
+                btn.click(
+                    force=True,
+                    timeout=10000
+                )
+
+                print(
+                    "✓ First Publish clicked with force.",
+                    flush=True
+                )
+
+                page.wait_for_timeout(
+                    3000
+                )
+
+                if page.locator(
+                    ".ant-modal-wrap:visible"
+                ).count() > 0:
+
+                    return True
+
+            except Exception as e:
+
+                print(
+                    f"Force click failed: {e}",
+                    flush=True
+                )
+
+        else:
+
+            print(
+                f"Publish button not found "
+                f"(attempt {attempt + 1}/5)",
+                flush=True
+            )
+
+        page.wait_for_timeout(
+            2000
+        )
+
+    return (
+        page.locator(
+            ".ant-modal-wrap:visible"
+        ).count() > 0
+    )
+
+
+# ============================================================
+# CLICK FINAL PUBLISH
+# ============================================================
+
+def click_final_publish(page):
+
+    print(
+        "Searching for final Publish button...",
+        flush=True
+    )
+
+    page.wait_for_timeout(
+        1500
+    )
+
+    modal = page.locator(
+        ".ant-modal-wrap:visible"
+    ).last
+
+    if modal.count() == 0:
+
+        print(
+            "❌ Publish modal not found.",
+            flush=True
+        )
+
+        return False
+
+    buttons = modal.locator(
+        "button"
+    )
+
+    candidates = []
+
+    for i in range(
+        buttons.count()
+    ):
+
+        try:
+
+            btn = buttons.nth(i)
+
+            if not btn.is_visible():
+                continue
+
+            txt = (
+                btn.inner_text()
+                .strip()
+                .lower()
+            )
+
+            if txt in {
+                "publish",
+                "submit",
+                "confirm"
+            }:
+
+                candidates.append(
+                    btn
+                )
+
+        except Exception:
+            continue
+
+    print(
+        f"Final modal action buttons: "
+        f"{len(candidates)}",
+        flush=True
+    )
+
+    if not candidates:
+
+        # Fallback
+        candidates = [
+            modal.locator(
+                "button.ant-btn-primary"
+            ).last
+        ]
+
+    for btn in reversed(
+        candidates
+    ):
+
+        try:
+
+            print(
+                "Trying final Publish click...",
+                flush=True
+            )
+
+            btn.scroll_into_view_if_needed(
+                timeout=5000
+            )
+
+        except Exception:
+            pass
+
+        # Normal click
+        try:
+
+            btn.click(
+                timeout=10000
+            )
+
+            print(
+                "✓ FINAL PUBLISH CLICKED.",
+                flush=True
+            )
+
+            return True
+
+        except Exception as e:
+
+            print(
+                f"Normal final click failed: {e}",
+                flush=True
+            )
+
+        # Force fallback
+        try:
+
+            btn.click(
+                force=True,
+                timeout=10000
+            )
+
+            print(
+                "✓ FINAL PUBLISH FORCE-CLICKED.",
+                flush=True
+            )
+
+            return True
+
+        except Exception as e:
+
+            print(
+                f"Force final click failed: {e}",
+                flush=True
+            )
+
+    return False
+
+
+# ============================================================
+# SAVE DEBUG HTML
+# ============================================================
+
+def save_debug(page):
+
+    try:
+
+        filename = (
+            "serey_debug_"
+            + str(int(time.time()))
+            + ".html"
+        )
+
+        html = page.content()
+
+        with open(
+            filename,
+            "w",
+            encoding="utf-8"
+        ) as f:
+
+            f.write(html)
+
+        print(
+            f"✓ Debug HTML saved: {filename}",
+            flush=True
+        )
+
+    except Exception as e:
+
+        print(
+            f"Debug save failed: {e}",
+            flush=True
+        )
+
+
+# ============================================================
+# PUBLISH
 # ============================================================
 
 def publish(page, post):
-    print("-" * 60)
-    print(f"Publishing: {post['title']} (Steem Date: {post.get('created', 'N/A')})", flush=True)
 
-    page.goto(NEW_POST, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(5000)
+    print(
+        "-" * 60,
+        flush=True
+    )
 
-    # 1. TITLE
+    print(
+        f"Publishing: {post['title']} "
+        f"(Steem Date: {post.get('created', 'N/A')})",
+        flush=True
+    )
+
+    # --------------------------------------------------------
+    # Open editor
+    # --------------------------------------------------------
+
+    page.goto(
+        NEW_POST,
+        wait_until="domcontentloaded",
+        timeout=60000
+    )
+
+    page.wait_for_timeout(
+        5000
+    )
+
+    # --------------------------------------------------------
+    # TITLE
+    # --------------------------------------------------------
+
     title_box = page.locator(
-        'input[placeholder*="title" i], textarea[placeholder*="title" i], input[placeholder*="Enter title" i]'
+        'input[placeholder*="title" i], '
+        'textarea[placeholder*="title" i], '
+        'input[placeholder*="Enter title" i]'
     ).first
-    title_box.click(force=True)
-    title_box.fill(post["title"])
-    print("✓ Title filled", flush=True)
-    page.wait_for_timeout(1000)
 
-    # 2. BODY
-    editor = page.locator('.ql-editor, div[contenteditable="true"]').first
-    editor.click(force=True)
-    page.wait_for_timeout(500)
+    title_box.wait_for(
+        state="visible",
+        timeout=20000
+    )
+
+    title_box.fill(
+        post["title"]
+    )
+
+    print(
+        "✓ Title filled",
+        flush=True
+    )
+
+    # --------------------------------------------------------
+    # BODY
+    # --------------------------------------------------------
+
+    editor = page.locator(
+        '.ql-editor, '
+        'div[contenteditable="true"]'
+    ).first
+
+    editor.wait_for(
+        state="visible",
+        timeout=20000
+    )
+
     try:
-        editor.fill(post["body"])
-    except Exception:
-        page.keyboard.insert_text(post["body"])
-    print("✓ Body filled (with all post images)", flush=True)
-    page.wait_for_timeout(2000)
 
-    # 3. THUMBNAIL (COVER PHOTO)
-    downloaded_img = download_image(post.get("thumbnail"))
+        editor.fill(
+            post["body"]
+        )
+
+    except Exception:
+
+        editor.click(
+            force=True
+        )
+
+        page.keyboard.insert_text(
+            post["body"]
+        )
+
+    print(
+        f"✓ Body filled "
+        f"({len(post['body'])} characters)",
+        flush=True
+    )
+
+    page.wait_for_timeout(
+        1500
+    )
+
+    # --------------------------------------------------------
+    # THUMBNAIL
+    # --------------------------------------------------------
+
+    downloaded_img = download_image(
+        post.get("thumbnail")
+    )
+
     if downloaded_img:
+
         try:
-            file_input = page.locator('input[type="file"]').first
-            file_input.set_input_files(downloaded_img)
-            print("✓ Cover Thumbnail uploaded! Waiting 10s for upload...", flush=True)
-            page.wait_for_timeout(10000)
+
+            file_inputs = page.locator(
+                'input[type="file"]'
+            )
+
+            count = file_inputs.count()
+
+            print(
+                f"File inputs detected: {count}",
+                flush=True
+            )
+
+            if count > 0:
+
+                file_inputs.first.set_input_files(
+                    downloaded_img
+                )
+
+                print(
+                    "✓ Thumbnail uploaded.",
+                    flush=True
+                )
+
+                page.wait_for_timeout(
+                    7000
+                )
+
+                close_crop_modal(
+                    page
+                )
+
+                wait_for_modal_close(
+                    page,
+                    seconds=5
+                )
+
+                print(
+                    "✓ Thumbnail processing finished.",
+                    flush=True
+                )
+
         except Exception as e:
-            print(f"❌ Thumbnail upload failed: {e}")
 
-    # 4. FIRST PUBLISH (OPENS MODAL WITH RETRY)
-    print("Attempting to click first Publish button to trigger modal...", flush=True)
-    modal_opened = False
+            print(
+                f"❌ Thumbnail upload failed: {e}",
+                flush=True
+            )
 
-    for attempt in range(4):
-        # ক্লিক করা
+    # --------------------------------------------------------
+    # FIRST PUBLISH
+    # --------------------------------------------------------
+
+    if not click_first_publish(page):
+
+        print(
+            "❌ Could not open Publish modal.",
+            flush=True
+        )
+
+        save_debug(page)
+
+        return None
+
+    print(
+        "✓ Publish modal opened.",
+        flush=True
+    )
+
+    # --------------------------------------------------------
+    # CATEGORY
+    # --------------------------------------------------------
+
+    try:
+
+        selectors = [
+            '.ant-modal-wrap:visible .ant-select-selector',
+            '[role="dialog"] .ant-select-selector',
+            '.ant-select-selector:visible'
+        ]
+
+        select_btn = None
+
+        for selector in selectors:
+
+            loc = page.locator(
+                selector
+            )
+
+            if (
+                loc.count() > 0
+                and loc.first.is_visible()
+            ):
+
+                select_btn = loc.first
+                break
+
+        if select_btn:
+
+            select_btn.click(
+                force=True
+            )
+
+            page.wait_for_timeout(
+                1200
+            )
+
+            options = page.locator(
+                '.ant-select-dropdown:not(.ant-select-dropdown-hidden) '
+                '.ant-select-item-option, '
+                '[role="option"]:visible'
+            )
+
+            if options.count() > 0:
+
+                option = options.first
+
+                option_name = (
+                    option.inner_text()
+                    .strip()
+                )
+
+                option.click(
+                    force=True
+                )
+
+                print(
+                    f"✓ Category selected: "
+                    f"{option_name}",
+                    flush=True
+                )
+
+                page.wait_for_timeout(
+                    1000
+                )
+
+    except Exception as e:
+
+        print(
+            f"Category selection note: {e}",
+            flush=True
+        )
+
+    # --------------------------------------------------------
+    # NETWORK CAPTURE
+    # MUST START BEFORE FINAL PUBLISH
+    # --------------------------------------------------------
+
+    capture = NetworkCapture()
+
+    capture.attach(
+        page
+    )
+
+    # --------------------------------------------------------
+    # FINAL PUBLISH
+    # --------------------------------------------------------
+
+    if not click_final_publish(page):
+
+        print(
+            "❌ Final Publish button could not be clicked.",
+            flush=True
+        )
+
+        save_debug(page)
+
+        return None
+
+    # Give Serey time to send request
+    print(
+        "Waiting for Serey publish response...",
+        flush=True
+    )
+
+    for i in range(20):
+
+        page.wait_for_timeout(
+            1000
+        )
+
+        print(
+            f"Waiting... {i+1}/20 sec | "
+            f"URL: {page.url}",
+            flush=True
+        )
+
+        # If real URL appears immediately
+        if is_real_post_url(
+            page.url
+        ):
+
+            print(
+                "✓ REAL POST URL detected immediately.",
+                flush=True
+            )
+
+            candidate = page.url
+
+            if verify_real_post_page(
+                page,
+                candidate,
+                post["title"]
+            ):
+
+                if (
+                    downloaded_img
+                    and os.path.exists(
+                        downloaded_img
+                    )
+                ):
+
+                    os.remove(
+                        downloaded_img
+                    )
+
+                return candidate
+
+    # --------------------------------------------------------
+    # ANALYZE API RESPONSES
+    # --------------------------------------------------------
+
+    api_urls = analyze_network_responses(
+        capture
+    )
+
+    # Try API URLs
+    for candidate in api_urls:
+
+        if verify_real_post_page(
+            page,
+            candidate,
+            post["title"]
+        ):
+
+            if (
+                downloaded_img
+                and os.path.exists(
+                    downloaded_img
+                )
+            ):
+
+                os.remove(
+                    downloaded_img
+                )
+
+            return candidate
+
+    # --------------------------------------------------------
+    # CHECK LINKS ON CURRENT PAGE
+    # --------------------------------------------------------
+
+    print(
+        "Checking links on current Serey page...",
+        flush=True
+    )
+
+    current_links = find_real_post_links(
+        page
+    )
+
+    for candidate in current_links:
+
+        if verify_real_post_page(
+            page,
+            candidate,
+            post["title"]
+        ):
+
+            if (
+                downloaded_img
+                and os.path.exists(
+                    downloaded_img
+                )
+            ):
+
+                os.remove(
+                    downloaded_img
+                )
+
+            return candidate
+
+    # --------------------------------------------------------
+    # ACTIVITY PAGE
+    # IMPORTANT:
+    # /my-activity ITSELF IS NEVER SUCCESS.
+    # We only search inside it for a REAL POST LINK.
+    # --------------------------------------------------------
+
+    activity_links = search_activity_for_post(
+        page,
+        post["title"]
+    )
+
+    for candidate in activity_links:
+
+        if verify_real_post_page(
+            page,
+            candidate,
+            post["title"]
+        ):
+
+            if (
+                downloaded_img
+                and os.path.exists(
+                    downloaded_img
+                )
+            ):
+
+                os.remove(
+                    downloaded_img
+                )
+
+            return candidate
+
+    # --------------------------------------------------------
+    # FAILURE
+    # --------------------------------------------------------
+
+    print(
+        "",
+        flush=True
+    )
+
+    print(
+        "=" * 60,
+        flush=True
+    )
+
+    print(
+        "❌ PUBLISH COULD NOT BE VERIFIED",
+        flush=True
+    )
+
+    print(
+        f"Final browser URL: {page.url}",
+        flush=True
+    )
+
+    print(
+        "No verified real post URL was found.",
+        flush=True
+    )
+
+    print(
+        "Therefore this Steem post WILL NOT "
+        "be added to synced_posts.json.",
+        flush=True
+    )
+
+    print(
+        "=" * 60,
+        flush=True
+    )
+
+    save_debug(
+        page
+    )
+
+    if (
+        downloaded_img
+        and os.path.exists(
+            downloaded_img
+        )
+    ):
+
         try:
-            page.evaluate('''() => {
-                const btns = Array.from(document.querySelectorAll('button, a, div[role="button"], span'));
-                for (let b of btns) {
-                    if (b.innerText && b.innerText.trim().toLowerCase() === 'publish' && b.offsetParent !== null) {
-                        b.click();
-                        break;
-                    }
-                }
-            }''')
+            os.remove(
+                downloaded_img
+            )
         except Exception:
             pass
 
-        page.wait_for_timeout(3000)
-
-        # চেক করা ড্রপডাউন সহ মডাল ওপেন হয়েছে কিনা
-        select_test = page.locator('.ant-modal-content .ant-select, div[role="dialog"] .ant-select, .ant-select-selector:visible')
-        if select_test.count() > 0:
-            print(f"✓ Real Publish Modal detected with {select_test.count()} dropdown(s)!", flush=True)
-            modal_opened = True
-            break
-        else:
-            print(f"Retrying first Publish click (attempt {attempt+1})...", flush=True)
-            try:
-                page.locator('button:has-text("Publish"), div[role="button"]:has-text("Publish")').last.click(force=True)
-            except:
-                pass
-            page.wait_for_timeout(3000)
-
-    # 5. SELECT CATEGORY IN MODAL
-    page.wait_for_timeout(2000)
-    try:
-        # ড্রপডাউনে ক্লিক করা
-        select_btn = page.locator('.ant-modal-content .ant-select-selector, div[role="dialog"] .ant-select-selector, .ant-select-selector:visible').first
-        if select_btn.is_visible():
-            select_btn.click(force=True)
-            page.wait_for_timeout(1500)
-
-            # অপশন থেকে প্রথম ক্যাটাগরি সিলেক্ট করা
-            first_opt = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, [role="option"]:visible').first
-            if first_opt.is_visible():
-                opt_name = first_opt.inner_text().strip()
-                first_opt.click(force=True)
-                print(f"✓ Category successfully selected: {opt_name}", flush=True)
-                page.wait_for_timeout(1000)
-    except Exception as e:
-        print(f"Category selection note: {e}", flush=True)
-
-    # 6. FINAL PUBLISH BUTTON INSIDE MODAL
-    print("Clicking final Submit button inside modal...", flush=True)
-    page.wait_for_timeout(2000)
-
-    # মডালের আসল কনফার্ম বাটনে ক্লিক
-    try:
-        page.evaluate('''() => {
-            const modal = document.querySelector('.ant-modal-content, div[role="dialog"], .modal-content');
-            if (modal) {
-                const btns = Array.from(modal.querySelectorAll('button'));
-                const submitBtn = btns.find(b => b.innerText && (b.innerText.trim().toLowerCase() === 'publish' || b.innerText.trim().toLowerCase() === 'submit' || b.innerText.trim().toLowerCase() === 'confirm'));
-                if (submitBtn) {
-                    submitBtn.removeAttribute('disabled');
-                    submitBtn.click();
-                }
-            }
-        }''')
-        print("✓ Executed JS Click on Final Modal Publish button!", flush=True)
-    except Exception as e:
-        print(f"JS final click error: {e}", flush=True)
-
-    # ব্যাকআপ প্লে-রাইট ক্লিক
-    try:
-        modal_btn = page.locator(
-            '.ant-modal-content button:has-text("Publish"), '
-            'div[role="dialog"] button:has-text("Publish"), '
-            'button.ant-btn-primary'
-        ).last
-        if modal_btn.is_visible():
-            modal_btn.click(force=True)
-            print("✓ Playwright Final Click executed!", flush=True)
-    except Exception:
-        pass
-
-    page.wait_for_timeout(10000)
-
-    if downloaded_img and os.path.exists(downloaded_img):
-        try:
-            os.remove(downloaded_img)
-        except Exception:
-            pass
-
-    return verify(page, post["title"])
+    return None
 
 
 # ============================================================
@@ -456,55 +2322,232 @@ def publish(page, post):
 # ============================================================
 
 def main():
-    print("=" * 60)
-    print("STEEM -> SEREY AUTO SYNC (LAST 1 YEAR -> OLDEST TO NEWEST)")
-    print("=" * 60)
 
-    if not STEEM_USERNAME or not SEREY_LOGIN or not SEREY_PASSWORD:
-        print("❌ Error: Missing Environment Secrets!")
+    print(
+        "=" * 60
+    )
+
+    print(
+        "STEEM -> BENGALI SEREY AUTO SYNC"
+    )
+
+    print(
+        "LAST 365 DAYS -> OLDEST TO NEWEST"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    # --------------------------------------------------------
+    # ENV CHECK
+    # --------------------------------------------------------
+
+    if (
+        not STEEM_USERNAME
+        or not SEREY_LOGIN
+        or not SEREY_PASSWORD
+    ):
+
+        print(
+            "❌ Error: Missing Environment Secrets!",
+            flush=True
+        )
+
         return
+
+    # --------------------------------------------------------
+    # LOAD SYNCED
+    # --------------------------------------------------------
 
     synced = load_synced()
-    print(f"Previously synced: {len(synced)}", flush=True)
+
+    print(
+        f"Previously synced: {len(synced)}",
+        flush=True
+    )
+
+    # --------------------------------------------------------
+    # GET POSTS
+    # --------------------------------------------------------
 
     posts = get_posts()
-    new_posts = [p for p in posts if p["id"] not in synced]
-    print(f"Unsynced posts remaining (Last 1 Year): {len(new_posts)}", flush=True)
 
-    posts_to_run = new_posts[:POSTS_PER_RUN]
+    new_posts = [
+        p
+        for p in posts
+        if p["id"] not in synced
+    ]
+
+    print(
+        f"Unsynced posts remaining "
+        f"(Last 1 Year): {len(new_posts)}",
+        flush=True
+    )
+
+    posts_to_run = (
+        new_posts[:POSTS_PER_RUN]
+    )
+
     if not posts_to_run:
-        print("No new posts to publish.")
+
+        print(
+            "No new posts to publish.",
+            flush=True
+        )
+
         return
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    for p in posts_to_run:
+
+        print(
+            f"Selected: {p['id']}",
+            flush=True
         )
+
+        print(
+            f"Created: {p['created']}",
+            flush=True
+        )
+
+    # --------------------------------------------------------
+    # PLAYWRIGHT
+    # --------------------------------------------------------
+
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=True
+        )
+
+        context = browser.new_context(
+            viewport={
+                "width": 1280,
+                "height": 900
+            },
+
+            user_agent=(
+                "Mozilla/5.0 "
+                "(Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/140.0 Safari/537.36"
+            )
+        )
+
         page = context.new_page()
 
         try:
-            login(page)
+
+            login(
+                page
+            )
 
             for post in posts_to_run:
+
                 try:
-                    if publish(page, post):
-                        synced.add(post["id"])
-                        save_synced(synced)
-                        print(f"✓ SAVED AS SYNCED: {post['id']}", flush=True)
+
+                    published_url = publish(
+                        page,
+                        post
+                    )
+
+                    # ------------------------------------------------
+                    # ONLY REAL VERIFIED URL CAN BE SYNCED
+                    # ------------------------------------------------
+
+                    if (
+                        published_url
+                        and is_real_post_url(
+                            published_url
+                        )
+                    ):
+
+                        print(
+                            "",
+                            flush=True
+                        )
+
+                        print(
+                            "✓✓✓ PUBLISHED SUCCESSFULLY ✓✓✓",
+                            flush=True
+                        )
+
+                        print(
+                            f"Published URL: "
+                            f"{published_url}",
+                            flush=True
+                        )
+
+                        synced.add(
+                            post["id"]
+                        )
+
+                        save_synced(
+                            synced
+                        )
+
+                        print(
+                            f"✓ SAVED AS SYNCED: "
+                            f"{post['id']}",
+                            flush=True
+                        )
+
                     else:
-                        print("⚠️ NOT SAVED AS SYNCED.", flush=True)
+
+                        print(
+                            "",
+                            flush=True
+                        )
+
+                        print(
+                            f"⚠ FAILED: {post['id']}",
+                            flush=True
+                        )
+
+                        print(
+                            "⚠ This post will NOT "
+                            "be added to synced_posts.json.",
+                            flush=True
+                        )
+
                 except Exception as e:
-                    print(f"❌ Publish error: {e}", flush=True)
+
+                    print(
+                        f"❌ Publish error: {e}",
+                        flush=True
+                    )
+
+                    print(
+                        f"⚠ FAILED: {post['id']}",
+                        flush=True
+                    )
 
         finally:
+
             browser.close()
 
-    print("=" * 60)
-    print("SYNC COMPLETED")
-    print("=" * 60)
+    print(
+        "",
+        flush=True
+    )
 
+    print(
+        "=" * 60
+    )
+
+    print(
+        "RUN FINISHED"
+    )
+
+    print(
+        "=" * 60
+    )
+
+
+# ============================================================
+# RUN
+# ============================================================
 
 if __name__ == "__main__":
     main()
