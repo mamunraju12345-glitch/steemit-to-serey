@@ -139,7 +139,7 @@ def save_synced(data):
 
 
 # ============================================================
-# THUMBNAIL + BODY
+# THUMBNAIL + CLEAN BODY
 # ============================================================
 
 def extract_thumbnail_and_body(body, metadata):
@@ -223,10 +223,109 @@ def extract_thumbnail_and_body(body, metadata):
         if m:
             thumbnail = m.group(1)
 
+    # ========================================================
+    # CLEAN ARTICLE BODY
+    # ========================================================
+
+    # Remove Markdown images
     body = re.sub(
-        r'\n{4,}',
+        r'!\[[^\]]*\]\(\s*https?://[^)\s]+\s*\)',
+        '',
+        body,
+        flags=re.I
+    )
+
+    # Remove HTML images
+    body = re.sub(
+        r'<img\b[^>]*>',
+        '',
+        body,
+        flags=re.I
+    )
+
+    # Remove image URLs
+    body = re.sub(
+        r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)'
+        r'(?:\?\S*)?',
+        '',
+        body,
+        flags=re.I
+    )
+
+    # Remove HTML tags
+    body = re.sub(
+        r'<[^>]+>',
+        '',
+        body
+    )
+
+    # Remove Markdown headings
+    body = re.sub(
+        r'^\s{0,3}#{1,6}\s*',
+        '',
+        body,
+        flags=re.M
+    )
+
+    # Remove bold Markdown
+    body = re.sub(
+        r'\*\*(.*?)\*\*',
+        r'\1',
+        body,
+        flags=re.S
+    )
+
+    # Remove italic Markdown
+    body = re.sub(
+        r'(?<!\*)\*(.*?)\*(?!\*)',
+        r'\1',
+        body,
+        flags=re.S
+    )
+
+    # Convert Markdown links to plain text
+    # [Example](https://example.com)
+    # becomes Example
+    body = re.sub(
+        r'\[([^\]]+)\]\((https?://[^)]+)\)',
+        r'\1',
+        body,
+        flags=re.I
+    )
+
+    # Remove lines containing only URLs
+    lines = []
+
+    for line in body.splitlines():
+
+        stripped = line.strip()
+
+        if not stripped:
+            lines.append("")
+            continue
+
+        if re.fullmatch(
+            r'https?://\S+',
+            stripped,
+            re.I
+        ):
+            continue
+
+        lines.append(line)
+
+    body = "\n".join(lines)
+
+    # Remove excessive blank lines
+    body = re.sub(
+        r'\n[ \t]*\n[ \t]*\n+',
         '\n\n',
         body
+    )
+
+    # Remove leading/trailing spaces from each line
+    body = "\n".join(
+        line.strip()
+        for line in body.splitlines()
     )
 
     return body.strip(), thumbnail
@@ -414,7 +513,6 @@ def get_posts():
 
         time.sleep(0.3)
 
-    # oldest -> newest
     posts.reverse()
 
     print(
@@ -531,10 +629,6 @@ def login(page):
         f"After login URL: {page.url}",
         flush=True
     )
-
-    # --------------------------------------------------------
-    # Check if already logged in
-    # --------------------------------------------------------
 
     login_buttons = page.locator(
         'a:has-text("Log in"), '
@@ -672,7 +766,6 @@ def is_real_post_url(url):
             .rstrip("/")
         )
 
-        # Must be Serey
         if not (
             host == "serey.io"
             or host == "www.serey.io"
@@ -680,7 +773,6 @@ def is_real_post_url(url):
         ):
             return False
 
-        # Never accept these
         bad_parts = [
             "/blog/post/new",
             "/my-activity",
@@ -700,8 +792,6 @@ def is_real_post_url(url):
             if bad in lower_path:
                 return False
 
-        # Expected:
-        # /authors/username/post-id
         m = re.match(
             r"^/authors/([^/]+)/([^/]+)$",
             path,
@@ -758,7 +848,6 @@ def is_real_post_url(url):
 class NetworkCapture:
 
     def __init__(self):
-
         self.responses = []
 
     def attach(self, page):
@@ -777,8 +866,6 @@ class NetworkCapture:
 
                 status = response.status
 
-                # We are especially interested in POST/PUT/PATCH
-                # API calls after Publish.
                 if (
                     method.upper()
                     in {
@@ -847,7 +934,6 @@ def extract_urls_from_text(text):
     if not text:
         return found
 
-    # Full URLs
     urls = re.findall(
         r'https?://[^\s"\'<>]+',
         text,
@@ -879,7 +965,6 @@ def collect_urls_from_json(obj):
             extract_urls_from_text(obj)
         )
 
-        # Possible relative URL
         matches = re.findall(
             r'["\'](\/authors\/[^"\']+)["\']',
             obj,
@@ -903,7 +988,6 @@ def collect_urls_from_json(obj):
                 key
             ).lower()
 
-            # Common URL-like fields
             if any(
                 word in key_lower
                 for word in [
@@ -1019,7 +1103,6 @@ def analyze_network_responses(capture):
             flush=True
         )
 
-        # Only print useful API body
         if text:
 
             compact = re.sub(
@@ -1055,7 +1138,6 @@ def analyze_network_responses(capture):
             except Exception:
                 pass
 
-    # unique
     result = []
 
     for url in real_urls:
@@ -1234,8 +1316,6 @@ def verify_real_post_page(
 
             return True
 
-        # Sometimes title may be slightly transformed.
-        # Require a meaningful portion.
         words = [
             x
             for x in re.findall(
@@ -1338,7 +1418,6 @@ def search_activity_for_post(
                     flush=True
                 )
 
-            # Return only a REAL post URL.
             return links
 
         print(
@@ -1388,7 +1467,6 @@ def close_crop_modal(page):
             except Exception:
                 text = ""
 
-            # Cropper-related modal
             if (
                 "crop" in text
                 or modal.locator(
@@ -1578,7 +1656,6 @@ def click_first_publish(page):
             except Exception:
                 pass
 
-            # Normal click first
             try:
 
                 btn.click(
@@ -1607,7 +1684,6 @@ def click_first_publish(page):
                     flush=True
                 )
 
-            # Force fallback
             try:
 
                 btn.click(
@@ -1728,7 +1804,6 @@ def click_final_publish(page):
 
     if not candidates:
 
-        # Fallback
         candidates = [
             modal.locator(
                 "button.ant-btn-primary"
@@ -1753,7 +1828,6 @@ def click_final_publish(page):
         except Exception:
             pass
 
-        # Normal click
         try:
 
             btn.click(
@@ -1774,7 +1848,6 @@ def click_final_publish(page):
                 flush=True
             )
 
-        # Force fallback
         try:
 
             btn.click(
@@ -1852,10 +1925,6 @@ def publish(page, post):
         f"(Steem Date: {post.get('created', 'N/A')})",
         flush=True
     )
-
-    # --------------------------------------------------------
-    # Open editor
-    # --------------------------------------------------------
 
     page.goto(
         NEW_POST,
@@ -2086,7 +2155,6 @@ def publish(page, post):
 
     # --------------------------------------------------------
     # NETWORK CAPTURE
-    # MUST START BEFORE FINAL PUBLISH
     # --------------------------------------------------------
 
     capture = NetworkCapture()
@@ -2110,7 +2178,6 @@ def publish(page, post):
 
         return None
 
-    # Give Serey time to send request
     print(
         "Waiting for Serey publish response...",
         flush=True
@@ -2128,7 +2195,6 @@ def publish(page, post):
             flush=True
         )
 
-        # If real URL appears immediately
         if is_real_post_url(
             page.url
         ):
@@ -2167,7 +2233,6 @@ def publish(page, post):
         capture
     )
 
-    # Try API URLs
     for candidate in api_urls:
 
         if verify_real_post_page(
@@ -2225,9 +2290,6 @@ def publish(page, post):
 
     # --------------------------------------------------------
     # ACTIVITY PAGE
-    # IMPORTANT:
-    # /my-activity ITSELF IS NEVER SUCCESS.
-    # We only search inside it for a REAL POST LINK.
     # --------------------------------------------------------
 
     activity_links = search_activity_for_post(
@@ -2451,10 +2513,6 @@ def main():
                         page,
                         post
                     )
-
-                    # ------------------------------------------------
-                    # ONLY REAL VERIFIED URL CAN BE SYNCED
-                    # ------------------------------------------------
 
                     if (
                         published_url
