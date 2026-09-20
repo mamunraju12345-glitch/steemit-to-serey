@@ -88,13 +88,12 @@ def save_synced(data):
 
 
 # ============================================================
-# EXTRACT FIRST IMAGE AS THUMBNAIL
+# EXTRACT THUMBNAIL
 # ============================================================
 
 def extract_thumbnail_and_body(body, metadata):
     thumbnail = None
 
-    # 1. Metadata image
     try:
         meta = json.loads(metadata or "{}")
         for x in meta.get("image", []):
@@ -104,19 +103,16 @@ def extract_thumbnail_and_body(body, metadata):
     except Exception:
         pass
 
-    # 2. First Markdown image
     if not thumbnail:
         m = re.search(r'!\[[^\]]*\]\((https?://[^)\s]+)', body, re.I)
         if m:
             thumbnail = m.group(1)
 
-    # 3. First HTML img
     if not thumbnail:
         m = re.search(r'<img[^>]+src=["\'](https?://[^"\'>\s]+)', body, re.I)
         if m:
             thumbnail = m.group(1)
 
-    # 4. Direct image link
     if not thumbnail:
         m = re.search(r'(https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?)', body, re.I)
         if m:
@@ -127,7 +123,7 @@ def extract_thumbnail_and_body(body, metadata):
 
 
 # ============================================================
-# GET STEEM POSTS (LAST 1 YEAR -> OLDEST TO NEWEST)
+# GET STEEM POSTS (LAST 1 YEAR)
 # ============================================================
 
 def parse_steem_date(date_str):
@@ -301,12 +297,10 @@ def verify(page, title):
         url = page.url
         print(f"Check {step+1}/12 - Current URL: {url}", flush=True)
 
-        # /authors/ এর পর রিডাইরেক্ট হয়েছে কিনা
         if "/authors/" in url.lower() and "/blog/post/new" not in url:
             print(f"✓ SUCCESS: POST PUBLISHED AND REDIRECTED TO: {url}", flush=True)
             return True
 
-        # সাকসেস মেসেজ দেখা গেছে কিনা
         try:
             if page.locator('text="Successfully posted your article", text="সফলভাবে পোস্ট করা হয়েছে"').is_visible():
                 print("✓ SUCCESS MESSAGE DETECTED!", flush=True)
@@ -314,16 +308,75 @@ def verify(page, title):
         except:
             pass
 
-    # কোনো এরর থাকলে লগ করা
-    try:
-        errors = page.locator('.ant-message-error, .ant-form-item-explain-error, .error').all_inner_texts()
-        if errors:
-            print(f"⚠️ Page Errors: {errors}", flush=True)
-    except:
-        pass
-
     print("❌ Publication could not be verified.", flush=True)
     return False
+
+
+# ============================================================
+# CATEGORY & SUBCATEGORY SELECTION HANDLER
+# ============================================================
+
+def handle_category_and_subcategory(page):
+    print("Searching and selecting Category inside modal...", flush=True)
+    page.wait_for_timeout(2000)
+
+    # ১. ক্যাটাগরি ড্রপডাউন ট্রিগার খোঁজা
+    category_clicked = False
+    possible_cat_selectors = [
+        page.get_by_text("Select category", exact=False),
+        page.get_by_text("Select Category", exact=False),
+        page.get_by_text("ক্যাটাগরি নির্বাচন", exact=False),
+        page.get_by_text("ক্যাটাগরি", exact=False),
+        page.locator('.ant-modal:visible .ant-select-selector, div[role="dialog"]:visible .ant-select-selector'),
+        page.locator('.ant-select-selector:visible'),
+    ]
+
+    for sel in possible_cat_selectors:
+        try:
+            target = sel.first
+            if target.count() > 0 and target.is_visible():
+                target.click(force=True)
+                print("✓ Clicked Category dropdown trigger.", flush=True)
+                page.wait_for_timeout(1500)
+
+                # ড্রপডাউন অপশন নির্বাচন
+                options = page.locator(
+                    '.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, '
+                    '[role="option"]:visible, '
+                    '.ant-select-item:visible'
+                )
+
+                if options.count() > 0:
+                    opt_txt = options.first.inner_text().strip()
+                    options.first.click(force=True)
+                    print(f"✓ CATEGORY SELECTED: {opt_txt}", flush=True)
+                    category_clicked = True
+                    page.wait_for_timeout(1000)
+                    break
+        except Exception as e:
+            print(f"Category selector check note: {e}", flush=True)
+
+    # ২. সাব-ক্যাটাগরি থাকলে সিলেক্ট করা
+    possible_sub_selectors = [
+        page.get_by_text("Select sub category", exact=False),
+        page.get_by_text("Select Sub Category", exact=False),
+        page.get_by_text("সাব ক্যাটাগরি", exact=False),
+    ]
+
+    for sel in possible_sub_selectors:
+        try:
+            target = sel.first
+            if target.count() > 0 and target.is_visible():
+                target.click(force=True)
+                page.wait_for_timeout(1000)
+                sub_opts = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, [role="option"]:visible')
+                if sub_opts.count() > 0:
+                    sub_opts.first.click(force=True)
+                    print("✓ SUB-CATEGORY SELECTED.", flush=True)
+                    page.wait_for_timeout(1000)
+                    break
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -357,7 +410,7 @@ def publish(page, post):
     print(f"✓ Body filled ({len(post['body'])} characters)", flush=True)
     page.wait_for_timeout(2000)
 
-    # 3. THUMBNAIL (COVER PHOTO & CROP HANDLER)
+    # 3. THUMBNAIL (COVER PHOTO & CROP)
     downloaded_img = download_image(post.get("thumbnail"))
     if downloaded_img:
         try:
@@ -380,7 +433,7 @@ def publish(page, post):
         except Exception as e:
             print(f"❌ Thumbnail processing note: {e}", flush=True)
 
-    # 4. FIRST PUBLISH (OPENS PUBLISH MODAL)
+    # 4. FIRST PUBLISH
     print("Attempting to click first Publish...", flush=True)
     page.wait_for_timeout(2000)
 
@@ -400,77 +453,39 @@ def publish(page, post):
         }''')
         print("✓ First Publish triggered via JS.", flush=True)
 
-    page.wait_for_timeout(5000)
+    page.wait_for_timeout(4000)
 
-    # 5. TARGET ONLY VISIBLE PUBLISH MODAL
-    print("Searching for active Publish modal...", flush=True)
-    active_modal = page.locator(
-        '.ant-modal-content:visible, div[role="dialog"]:visible, .modal-content:visible'
-    ).last
+    # 5. HANDLE CATEGORY & SUB-CATEGORY IN MODAL
+    handle_category_and_subcategory(page)
 
-    try:
-        active_modal.wait_for(state="visible", timeout=8000)
-        print("✓ Active Publish modal confirmed!", flush=True)
-    except Exception:
-        print("Publish modal wait continuing...", flush=True)
+    # 6. FINAL PUBLISH BUTTON
+    print("Searching for final Publish button...", flush=True)
+    page.wait_for_timeout(2000)
 
-    # ক্যাটাগরি ড্রপডাউন সিলেক্ট করা (শুধুমাত্র অ্যাক্টিভ মডালের ভেতর)
-    try:
-        cat_dropdown = active_modal.locator('.ant-select-selector, .ant-select, [role="combobox"]').first
-        if cat_dropdown.is_visible():
-            cat_dropdown.click(force=True)
-            page.wait_for_timeout(1500)
+    final_btn_selectors = [
+        'div[role="dialog"]:visible button:has-text("Publish")',
+        'div[role="dialog"]:visible button:has-text("প্রকাশ করুন")',
+        '.ant-modal:visible button.ant-btn-primary',
+        '.ant-modal:visible button:has-text("Publish")',
+        '.ant-modal:visible button:has-text("প্রকাশ করুন")',
+        'button.ant-btn-primary:visible',
+        'button:has-text("Publish"):visible',
+        'button:has-text("প্রকাশ করুন"):visible',
+    ]
 
-            first_option = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, [role="option"]:visible').first
-            if first_option.is_visible():
-                opt_name = first_option.inner_text().strip()
-                first_option.click(force=True)
-                print(f"✓ Category selected inside modal: {opt_name}", flush=True)
-                page.wait_for_timeout(1000)
-    except Exception as e:
-        print(f"Category selection note: {e}", flush=True)
-
-    # 6. FINAL PUBLISH BUTTON (INSIDE ACTIVE MODAL)
-    print("Searching for final Publish button inside active modal...", flush=True)
-    page.wait_for_timeout(1500)
-
-    # মডালের আসল Publish বাটনে ক্লিক
-    final_button = active_modal.locator(
-        'button:has-text("Publish"), button.ant-btn-primary, button:has-text("প্রকাশ করুন"), button:has-text("Submit"), button:has-text("Confirm")'
-    ).last
-
-    if not final_button.is_visible():
-        # ব্যাকআপ সিলেক্টর: স্ক্রিনের যে কোনো অ্যাক্টিভ কনফার্ম বাটন
-        final_button = page.locator('.ant-modal:visible button.ant-btn-primary, div[role="dialog"]:visible button.ant-btn-primary').last
-
-    try:
-        # বাটন সক্রিয় হওয়া পর্যন্ত অপেক্ষা
-        for _ in range(6):
-            if final_button.is_enabled():
+    for sel in final_btn_selectors:
+        try:
+            btn = page.locator(sel).last
+            if btn.is_visible():
+                btn.scroll_into_view_if_needed()
+                btn.click(force=True)
+                print(f"✓ FINAL PUBLISH CLICKED with selector: {sel}", flush=True)
                 break
-            page.wait_for_timeout(1000)
-
-        final_button.click(force=True)
-        print("✓ FINAL PUBLISH BUTTON CLICKED SUCCESSFULLY!", flush=True)
-    except Exception as e:
-        print(f"Final click execution error: {e}", flush=True)
-        # আলটিমেট জাভাস্ক্রিপ্ট ক্লিক ফলব্যাক
-        page.evaluate('''() => {
-            const modals = Array.from(document.querySelectorAll('.ant-modal-content, div[role="dialog"]')).filter(m => m.offsetParent !== null);
-            if (modals.length > 0) {
-                const targetModal = modals[modals.length - 1];
-                const btn = Array.from(targetModal.querySelectorAll('button')).find(b => b.innerText && (b.innerText.toLowerCase().includes('publish') || b.innerText.includes('প্রকাশ')));
-                if (btn) {
-                    btn.removeAttribute('disabled');
-                    btn.click();
-                }
-            }
-        }''')
-        print("✓ Executed JS Final Fallback Click.", flush=True)
+        except Exception:
+            continue
 
     page.wait_for_timeout(12000)
 
-    # লোকাল ফাইল ক্লিন করা
     if downloaded_img and os.path.exists(downloaded_img):
         try:
             os.remove(downloaded_img)
