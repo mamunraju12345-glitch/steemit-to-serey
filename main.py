@@ -87,29 +87,6 @@ def save_synced(data):
 
 
 # ============================================================
-# SEREY LIVE POST DETECTOR (PREVENTS DUPLICATES)
-# ============================================================
-
-def get_already_published_on_serey(author):
-    print(f"Checking existing posts on Serey for @{author}...", flush=True)
-    published_titles = set()
-    
-    # Check Serey author discussions if available via public nodes
-    try:
-        url = f"https://serey.io/api/v1/author/{author}/posts"
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            for item in data.get("posts", []):
-                if "title" in item:
-                    published_titles.add(item["title"].strip().lower())
-    except Exception:
-        pass
-
-    return published_titles
-
-
-# ============================================================
 # EXTRACT THUMBNAIL
 # ============================================================
 
@@ -324,12 +301,16 @@ def verify(page, title):
             print(f"✓ SUCCESS: POST PUBLISHED AND REDIRECTED TO: {url}", flush=True)
             return True
 
-        # ডুপ্লিকেট বা অন্য কোনো ব্লকচেইন এরর চেক করা
+        # পেজের লাইভ এরর নোটিফিকেশন চেক করা
         try:
-            body_text = page.locator("body").inner_text()
-            if "already exists" in body_text.lower() or "duplicate" in body_text.lower():
-                print("⚠️ Post already exists on Serey blockchain! Marking as synced.", flush=True)
-                return True
+            alerts = page.locator('.ant-message, .ant-notification, .ant-form-item-explain-error, .error, [role="alert"]').all_inner_texts()
+            clean_alerts = [a.strip() for a in alerts if a.strip()]
+            if clean_alerts:
+                print(f"⚠️ Page Alert / Notification: {clean_alerts}", flush=True)
+                # যদি বলে পোস্ট অলরেডি এক্সিস্ট করে
+                if any("already" in a.lower() or "duplicate" in a.lower() for a in clean_alerts):
+                    print("✓ Duplicate post detected on blockchain, marking synced.", flush=True)
+                    return True
         except:
             pass
 
@@ -337,13 +318,14 @@ def verify(page, title):
 
 
 # ============================================================
-# CATEGORY SELECTOR VIA KEYBOARD
+# CATEGORY & TAGS HANDLER INSIDE MODAL
 # ============================================================
 
-def handle_category_selection(page):
-    print("Selecting Category inside modal...", flush=True)
+def handle_modal_fields(page, post_category):
+    print("Handling Category and Tags inside modal...", flush=True)
     page.wait_for_timeout(2000)
 
+    # 1. Category Dropdown
     try:
         cat_box = page.locator('.ant-modal:visible .ant-select, div[role="dialog"]:visible .ant-select, .ant-select:visible').first
         if cat_box.is_visible():
@@ -357,6 +339,7 @@ def handle_category_selection(page):
     except Exception as e:
         print(f"Category note: {e}", flush=True)
 
+    # 2. Sub-Category Dropdown
     try:
         all_selects = page.locator('.ant-modal:visible .ant-select, div[role="dialog"]:visible .ant-select, .ant-select:visible')
         if all_selects.count() > 1:
@@ -369,6 +352,18 @@ def handle_category_selection(page):
             page.wait_for_timeout(800)
     except Exception as e:
         print(f"Sub-category note: {e}", flush=True)
+
+    # 3. Tags Input (if present in modal)
+    try:
+        tag_input = page.locator('.ant-modal:visible input[placeholder*="tag" i], div[role="dialog"]:visible input[placeholder*="tag" i]').first
+        if tag_input.is_visible():
+            tag_text = post_category or "blog"
+            tag_input.fill(tag_text)
+            page.keyboard.press("Enter")
+            print(f"✓ Tag added: {tag_text}", flush=True)
+            page.wait_for_timeout(500)
+    except Exception as e:
+        print(f"Tag note: {e}", flush=True)
 
 
 # ============================================================
@@ -445,11 +440,11 @@ def publish(page, post):
 
     page.wait_for_timeout(5000)
 
-    # 5. HANDLE CATEGORY
-    handle_category_selection(page)
+    # 5. HANDLE CATEGORY & TAGS
+    handle_modal_fields(page, post.get("category", "blog"))
 
     # 6. FINAL PUBLISH
-    print("Searching for final Publish button...", flush=True)
+    print("Searching for final Publish button inside modal...", flush=True)
     page.wait_for_timeout(2000)
 
     final_btn = page.locator(
@@ -525,8 +520,7 @@ def main():
                         save_synced(synced)
                         print(f"✓ SAVED AS SYNCED: {post['id']}", flush=True)
                     else:
-                        # যদি পোস্টটি অলরেডি পাবলিশ থাকে তবে এটিকে সেভ করে স্কিপ করবে
-                        print(f"⚠️ Post could not be published or is a duplicate. Auto-marking as synced to move forward: {post['id']}", flush=True)
+                        print(f"⚠️ Publication did not confirm, auto-marking as synced to prevent infinite loop: {post['id']}", flush=True)
                         synced.add(post["id"])
                         save_synced(synced)
 
