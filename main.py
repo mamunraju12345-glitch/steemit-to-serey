@@ -20,8 +20,8 @@ SEREY_LOGIN = os.environ.get(
 
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-# Support both bengali.serey.io and serey.io
-SEREY = os.environ.get("SEREY_URL", "https://bengali.serey.io").rstrip("/")
+# Main Stable Domain
+SEREY = os.environ.get("SEREY_URL", "https://serey.io").rstrip("/")
 NEW_POST = f"{SEREY}/blog/post/new"
 
 SYNC_FILE = "synced_posts.json"
@@ -313,70 +313,40 @@ def verify(page, title):
 
 
 # ============================================================
-# CATEGORY & SUBCATEGORY SELECTION HANDLER
+# BULLETPROOF CATEGORY SELECTOR (KEYBOARD DRIVEN)
 # ============================================================
 
-def handle_category_and_subcategory(page):
-    print("Searching and selecting Category inside modal...", flush=True)
+def handle_category_selection_bulletproof(page):
+    print("Selecting Category via Keyboard Emulation...", flush=True)
     page.wait_for_timeout(2000)
 
-    # ১. ক্যাটাগরি ড্রপডাউন ট্রিগার খোঁজা
-    category_clicked = False
-    possible_cat_selectors = [
-        page.get_by_text("Select category", exact=False),
-        page.get_by_text("Select Category", exact=False),
-        page.get_by_text("ক্যাটাগরি নির্বাচন", exact=False),
-        page.get_by_text("ক্যাটাগরি", exact=False),
-        page.locator('.ant-modal:visible .ant-select-selector, div[role="dialog"]:visible .ant-select-selector'),
-        page.locator('.ant-select-selector:visible'),
-    ]
+    # ১. প্রথম ড্রপডাউন (Category) সিলেক্ট করা
+    try:
+        cat_box = page.locator('.ant-modal:visible .ant-select, div[role="dialog"]:visible .ant-select, .ant-select:visible').first
+        if cat_box.is_visible():
+            cat_box.click(force=True)
+            page.wait_for_timeout(1000)
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(400)
+            page.keyboard.press("Enter")
+            print("✓ CATEGORY SELECTED SUCCESSFULLY VIA KEYBOARD!", flush=True)
+            page.wait_for_timeout(1000)
+    except Exception as e:
+        print(f"Category selection error: {e}", flush=True)
 
-    for sel in possible_cat_selectors:
-        try:
-            target = sel.first
-            if target.count() > 0 and target.is_visible():
-                target.click(force=True)
-                print("✓ Clicked Category dropdown trigger.", flush=True)
-                page.wait_for_timeout(1500)
-
-                # ড্রপডাউন অপশন নির্বাচন
-                options = page.locator(
-                    '.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, '
-                    '[role="option"]:visible, '
-                    '.ant-select-item:visible'
-                )
-
-                if options.count() > 0:
-                    opt_txt = options.first.inner_text().strip()
-                    options.first.click(force=True)
-                    print(f"✓ CATEGORY SELECTED: {opt_txt}", flush=True)
-                    category_clicked = True
-                    page.wait_for_timeout(1000)
-                    break
-        except Exception as e:
-            print(f"Category selector check note: {e}", flush=True)
-
-    # ২. সাব-ক্যাটাগরি থাকলে সিলেক্ট করা
-    possible_sub_selectors = [
-        page.get_by_text("Select sub category", exact=False),
-        page.get_by_text("Select Sub Category", exact=False),
-        page.get_by_text("সাব ক্যাটাগরি", exact=False),
-    ]
-
-    for sel in possible_sub_selectors:
-        try:
-            target = sel.first
-            if target.count() > 0 and target.is_visible():
-                target.click(force=True)
-                page.wait_for_timeout(1000)
-                sub_opts = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, [role="option"]:visible')
-                if sub_opts.count() > 0:
-                    sub_opts.first.click(force=True)
-                    print("✓ SUB-CATEGORY SELECTED.", flush=True)
-                    page.wait_for_timeout(1000)
-                    break
-        except Exception:
-            pass
+    # ২. দ্বিতীয় ড্রপডাউন (Sub-category) সিলেক্ট করা (যদি থাকে)
+    try:
+        all_selects = page.locator('.ant-modal:visible .ant-select, div[role="dialog"]:visible .ant-select, .ant-select:visible')
+        if all_selects.count() > 1:
+            all_selects.nth(1).click(force=True)
+            page.wait_for_timeout(1000)
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(400)
+            page.keyboard.press("Enter")
+            print("✓ SUB-CATEGORY SELECTED SUCCESSFULLY VIA KEYBOARD!", flush=True)
+            page.wait_for_timeout(1000)
+    except Exception as e:
+        print(f"Sub-category selection note: {e}", flush=True)
 
 
 # ============================================================
@@ -453,36 +423,35 @@ def publish(page, post):
         }''')
         print("✓ First Publish triggered via JS.", flush=True)
 
-    page.wait_for_timeout(4000)
+    page.wait_for_timeout(5000)
 
-    # 5. HANDLE CATEGORY & SUB-CATEGORY IN MODAL
-    handle_category_and_subcategory(page)
+    # 5. HANDLE CATEGORY & SUB-CATEGORY VIA KEYBOARD
+    handle_category_selection_bulletproof(page)
 
     # 6. FINAL PUBLISH BUTTON
     print("Searching for final Publish button...", flush=True)
     page.wait_for_timeout(2000)
 
-    final_btn_selectors = [
-        'div[role="dialog"]:visible button:has-text("Publish")',
-        'div[role="dialog"]:visible button:has-text("প্রকাশ করুন")',
-        '.ant-modal:visible button.ant-btn-primary',
-        '.ant-modal:visible button:has-text("Publish")',
-        '.ant-modal:visible button:has-text("প্রকাশ করুন")',
-        'button.ant-btn-primary:visible',
-        'button:has-text("Publish"):visible',
-        'button:has-text("প্রকাশ করুন"):visible',
-    ]
+    final_btn = page.locator(
+        'div[role="dialog"]:visible button:has-text("Publish"), '
+        'div[role="dialog"]:visible button:has-text("প্রকাশ করুন"), '
+        '.ant-modal:visible button.ant-btn-primary, '
+        '.ant-modal:visible button:has-text("Publish"), '
+        '.ant-modal:visible button:has-text("প্রকাশ করুন"), '
+        'button.ant-btn-primary:visible'
+    ).last
 
-    for sel in final_btn_selectors:
-        try:
-            btn = page.locator(sel).last
-            if btn.is_visible():
-                btn.scroll_into_view_if_needed()
-                btn.click(force=True)
-                print(f"✓ FINAL PUBLISH CLICKED with selector: {sel}", flush=True)
+    try:
+        # বাটন সক্রিয় হওয়া পর্যন্ত অপেক্ষা
+        for _ in range(6):
+            if final_btn.is_enabled():
                 break
-        except Exception:
-            continue
+            page.wait_for_timeout(1000)
+
+        final_btn.click(force=True)
+        print("✓ FINAL PUBLISH CLICKED SUCCESSFULLY!", flush=True)
+    except Exception as e:
+        print(f"Final click error: {e}", flush=True)
 
     page.wait_for_timeout(12000)
 
