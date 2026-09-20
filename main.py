@@ -20,11 +20,11 @@ SEREY_LOGIN = os.environ.get(
 
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-SEREY = os.environ.get("SEREY_URL", "https://serey.io").rstrip("/")
+SEREY = "https://serey.io"
 NEW_POST = f"{SEREY}/blog/post/new"
 
 SYNC_FILE = "synced_posts.json"
-TEMP_IMAGE_PREFIX = "temp_image"
+TEMP_IMAGE = "temp_image.jpg"
 
 POSTS_PER_RUN = 1
 DAYS_LIMIT = 365
@@ -87,42 +87,42 @@ def save_synced(data):
 
 
 # ============================================================
-# EXTRACT THUMBNAIL
+# EXTRACT FIRST IMAGE AS THUMBNAIL
 # ============================================================
 
-def extract_thumbnail_and_body(body, metadata):
-    thumbnail = None
+def clean_post(body, metadata):
+    image = None
 
     try:
         meta = json.loads(metadata or "{}")
         for x in meta.get("image", []):
             if isinstance(x, str) and x.startswith("http"):
-                thumbnail = x
+                image = x
                 break
     except Exception:
         pass
 
-    if not thumbnail:
+    if not image:
         m = re.search(r'!\[[^\]]*\]\((https?://[^)\s]+)', body, re.I)
         if m:
-            thumbnail = m.group(1)
+            image = m.group(1)
 
-    if not thumbnail:
+    if not image:
         m = re.search(r'<img[^>]+src=["\'](https?://[^"\'>\s]+)', body, re.I)
         if m:
-            thumbnail = m.group(1)
+            image = m.group(1)
 
-    if not thumbnail:
+    if not image:
         m = re.search(r'(https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?)', body, re.I)
         if m:
-            thumbnail = m.group(1)
+            image = m.group(1)
 
     body = re.sub(r'\n{4,}', '\n\n', body)
-    return body.strip(), thumbnail
+    return body.strip(), image
 
 
 # ============================================================
-# GET STEEM POSTS (LAST 1 YEAR)
+# GET STEEM POSTS (LAST 1 YEAR -> OLDEST TO NEWEST)
 # ============================================================
 
 def parse_steem_date(date_str):
@@ -184,7 +184,7 @@ def get_posts():
 
             seen.add(pid)
 
-            body, thumbnail = extract_thumbnail_and_body(
+            body, image = clean_post(
                 p.get("body", ""),
                 p.get("json_metadata", "{}")
             )
@@ -193,7 +193,7 @@ def get_posts():
                 "id": pid,
                 "title": p.get("title", "").strip(),
                 "body": body,
-                "thumbnail": thumbnail,
+                "image": image,
                 "created": created_str,
                 "category": p.get("category", "")
             })
@@ -219,7 +219,7 @@ def get_posts():
 
 
 # ============================================================
-# DOWNLOAD THUMBNAIL
+# DOWNLOAD IMAGE
 # ============================================================
 
 def download_image(url):
@@ -227,28 +227,27 @@ def download_image(url):
         return None
 
     try:
-        print(f"Downloading cover thumbnail: {url}", flush=True)
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://steemit.com/"
-        }
-        r = requests.get(url, timeout=25, headers=headers)
+        print(f"Downloading image: {url}", flush=True)
+        r = requests.get(
+            url,
+            timeout=25,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://steemit.com/"
+            }
+        )
         r.raise_for_status()
 
-        content_type = r.headers.get("content-type", "").lower()
-        ext = mimetypes.guess_extension(content_type.split(";")[0]) or ".jpg"
-        if ext == ".jpe":
-            ext = ".jpg"
+        if "image" not in r.headers.get("content-type", "").lower():
+            return None
 
-        file_path = f"{TEMP_IMAGE_PREFIX}{ext}"
-        with open(file_path, "wb") as f:
+        with open(TEMP_IMAGE, "wb") as f:
             f.write(r.content)
 
-        print(f"✓ Cover image saved: {file_path}", flush=True)
-        return file_path
+        return TEMP_IMAGE
 
     except Exception as e:
-        print(f"❌ Cover image download failed: {e}", flush=True)
+        print(f"Image download failed: {e}", flush=True)
         return None
 
 
@@ -262,26 +261,19 @@ def login(page):
     page.goto(SEREY, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(4000)
 
-    login_btn = page.locator(
+    page.locator(
         'a:has-text("Log in"), button:has-text("Log in"), a:has-text("Log In"), button:has-text("Log In")'
-    ).first
+    ).first.click(force=True)
 
-    if login_btn.count() > 0 and login_btn.is_visible():
-        login_btn.click(force=True)
-        page.wait_for_timeout(3000)
+    page.wait_for_timeout(3000)
 
-        user_in = page.locator('input[placeholder*="Username" i], input[type="text"]').first
-        pass_in = page.locator('input[placeholder*="Private Key" i], input[placeholder*="Password" i], input[type="password"]').first
+    page.locator('input[placeholder*="Username" i], input[type="text"]').first.fill(SEREY_LOGIN)
+    page.locator('input[placeholder*="Private Key" i], input[placeholder*="Password" i], input[type="password"]').first.fill(SEREY_PASSWORD)
 
-        user_in.fill(SEREY_LOGIN)
-        pass_in.fill(SEREY_PASSWORD)
+    page.locator('button:has-text("Log in"), button:has-text("Log In")').last.click(force=True)
+    page.wait_for_timeout(7000)
 
-        page.locator('button:has-text("Log in"), button:has-text("Log In")').last.click(force=True)
-        page.wait_for_timeout(7000)
-        print(f"After login URL: {page.url}", flush=True)
-        print("✓ LOGGED INTO SEREY SUCCESSFULLY!", flush=True)
-    else:
-        print("Already logged in or login button not found.", flush=True)
+    print("✓ LOGGED INTO SEREY SUCCESSFULLY!", flush=True)
 
 
 # ============================================================
@@ -291,13 +283,13 @@ def login(page):
 def verify(page, title):
     print("VERIFYING PUBLISHED POST...", flush=True)
 
-    for step in range(12):
-        page.wait_for_timeout(3000)
+    for _ in range(8):
+        page.wait_for_timeout(4000)
         url = page.url
-        print(f"Check {step+1}/12 - Current URL: {url}", flush=True)
+        print(f"Current URL: {url}", flush=True)
 
-        if "/authors/" in url.lower() and "/blog/post/new" not in url:
-            print(f"✓ SUCCESS: POST PUBLISHED AND REDIRECTED TO: {url}", flush=True)
+        if "/authors/" in url and "/blog/post/new" not in url:
+            print("✓ SUCCESS: POST PUBLISHED AND REDIRECTED!", flush=True)
             return True
 
         try:
@@ -312,7 +304,7 @@ def verify(page, title):
 
 
 # ============================================================
-# PUBLISH (CLEAN & PROVEN WORKING FLOW)
+# PUBLISH (EXACT ORIGINAL LOGIC THAT WORKED)
 # ============================================================
 
 def publish(page, post):
@@ -323,68 +315,90 @@ def publish(page, post):
     page.wait_for_timeout(5000)
 
     # 1. TITLE
-    title_box = page.locator(
-        'input[placeholder*="title" i], textarea[placeholder*="title" i], input[placeholder*="Enter title" i]'
-    ).first
-    title_box.click(force=True)
+    title_box = page.locator('input[placeholder*="Enter title" i], input[placeholder*="title" i]').first
+    title_box.click()
     title_box.fill(post["title"])
     print("✓ Title filled", flush=True)
     page.wait_for_timeout(1000)
 
     # 2. BODY
-    editor = page.locator('.ql-editor, div[contenteditable="true"]').first
-    editor.click(force=True)
-    page.wait_for_timeout(500)
-    try:
-        editor.fill(post["body"])
-    except Exception:
-        page.keyboard.insert_text(post["body"])
-    print(f"✓ Body filled ({len(post['body'])} characters)", flush=True)
+    editor = page.locator('div[contenteditable="true"]').first
+    editor.click()
+    editor.fill(post["body"])
+    print("✓ Body filled", flush=True)
     page.wait_for_timeout(2000)
 
     # 3. THUMBNAIL
-    downloaded_img = download_image(post.get("thumbnail"))
-    if downloaded_img:
+    image = download_image(post.get("image"))
+    if image:
         try:
             file_input = page.locator('input[type="file"]').first
-            file_input.set_input_files(downloaded_img)
+            file_input.set_input_files(image)
             print("✓ Thumbnail set, waiting for upload...", flush=True)
-            page.wait_for_timeout(8000)
+            page.wait_for_timeout(7000)
         except Exception as e:
-            print(f"❌ Thumbnail note: {e}")
+            print(f"Thumbnail upload failed: {e}", flush=True)
 
-    # 4. FIRST PUBLISH BUTTON
-    print("Clicking first Publish button...", flush=True)
-    page.locator(
-        'button:has-text("Publish"), div[role="button"]:has-text("Publish"), span:has-text("Publish")'
-    ).last.click(force=True)
+    # 4. FIRST PUBLISH BUTTON CLICK
+    print("Attempting to click first Publish button...", flush=True)
+    clicked = False
 
-    # Wait for Serey AI & Modal to pop up
-    page.wait_for_timeout(6000)
+    publish_btn_selectors = [
+        'button:has-text("Publish")',
+        'div:has-text("Publish")[role="button"]',
+        'span:has-text("Publish")'
+    ]
 
-    # 5. FINAL MODAL PUBLISH BUTTON
-    print("Clicking final Modal Publish button...", flush=True)
-    modal_button = page.locator(
-        'div[role="dialog"] button:has-text("Publish"), '
-        '.ant-modal-content button:has-text("Publish"), '
-        '.modal button:has-text("Publish"), '
-        'div[class*="modal"] button:has-text("Publish"), '
-        'button:has-text("Confirm"), '
-        'button:has-text("Submit"), '
-        'button:has-text("Publish")'
-    ).last
-
-    modal_button.click(force=True)
-    print("✓ Final Publish button clicked!", flush=True)
-
-    page.wait_for_timeout(10000)
-
-    if downloaded_img and os.path.exists(downloaded_img):
+    for sel in publish_btn_selectors:
         try:
-            os.remove(downloaded_img)
-        except Exception:
+            btn = page.locator(sel).first
+            if btn.is_visible():
+                btn.scroll_into_view_if_needed()
+                btn.click()
+                clicked = True
+                print(f"✓ Clicked publish with selector: {sel}", flush=True)
+                break
+        except:
             pass
 
+    if not clicked:
+        page.evaluate('''() => {
+            const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+            const pub = buttons.find(b => b.innerText && b.innerText.trim() === 'Publish');
+            if (pub) pub.click();
+        }''')
+        print("✓ Executed JS Click on Publish", flush=True)
+
+    page.wait_for_timeout(5000)
+
+    # 5. MODAL / POP-UP FINAL PUBLISH
+    print("Checking for Final Publish Modal/Pop-up...", flush=True)
+
+    modal_btn_selectors = [
+        'div[role="dialog"] button:has-text("Publish")',
+        '.ant-modal-content button:has-text("Publish")',
+        '.modal-content button:has-text("Publish")',
+        '.modal button:has-text("Publish")',
+        'div.fixed button:has-text("Publish")',
+        'div[class*="modal"] button:has-text("Publish")',
+        'div[class*="dialog"] button:has-text("Publish")',
+        'button:has-text("Confirm")',
+        'button:has-text("Submit")'
+    ]
+
+    for sel in modal_btn_selectors:
+        try:
+            m_btn = page.locator(sel).last
+            if m_btn.is_visible(timeout=4000):
+                print(f"✓ Found Final Modal Button: {sel}", flush=True)
+                page.wait_for_timeout(2000)
+                m_btn.click(force=True)
+                print("✓ FINAL PUBLISH CLICKED SUCCESSFULLY!", flush=True)
+                break
+        except:
+            continue
+
+    page.wait_for_timeout(10000)
     return verify(page, post["title"])
 
 
@@ -410,14 +424,14 @@ def main():
 
     posts_to_run = new_posts[:POSTS_PER_RUN]
     if not posts_to_run:
-        print("No new posts to publish.")
+        print("Nothing to publish.")
         return
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         )
         page = context.new_page()
 
@@ -436,6 +450,11 @@ def main():
                     print(f"❌ Publish error: {e}", flush=True)
 
         finally:
+            if os.path.exists(TEMP_IMAGE):
+                try:
+                    os.remove(TEMP_IMAGE)
+                except:
+                    pass
             browser.close()
 
     print("=" * 60)
