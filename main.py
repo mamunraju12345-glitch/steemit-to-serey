@@ -191,7 +191,6 @@ def get_posts():
 
             posts.append({
                 "id": pid,
-                "permlink": permlink,
                 "title": p.get("title", "").strip(),
                 "body": body,
                 "thumbnail": thumbnail,
@@ -245,7 +244,7 @@ def download_image(url):
         with open(file_path, "wb") as f:
             f.write(r.content)
 
-        print(f"✓ Cover image saved: {file_path} ({len(r.content)} bytes)", flush=True)
+        print(f"✓ Cover image saved: {file_path}", flush=True)
         return file_path
 
     except Exception as e:
@@ -301,73 +300,19 @@ def verify(page, title):
             print(f"✓ SUCCESS: POST PUBLISHED AND REDIRECTED TO: {url}", flush=True)
             return True
 
-        # পেজের লাইভ এরর নোটিফিকেশন চেক করা
         try:
-            alerts = page.locator('.ant-message, .ant-notification, .ant-form-item-explain-error, .error, [role="alert"]').all_inner_texts()
-            clean_alerts = [a.strip() for a in alerts if a.strip()]
-            if clean_alerts:
-                print(f"⚠️ Page Alert / Notification: {clean_alerts}", flush=True)
-                # যদি বলে পোস্ট অলরেডি এক্সিস্ট করে
-                if any("already" in a.lower() or "duplicate" in a.lower() for a in clean_alerts):
-                    print("✓ Duplicate post detected on blockchain, marking synced.", flush=True)
-                    return True
+            if page.locator('text="Successfully posted your article"').is_visible():
+                print("✓ SUCCESS MESSAGE DETECTED!", flush=True)
+                return True
         except:
             pass
 
+    print("❌ Publication could not be verified.", flush=True)
     return False
 
 
 # ============================================================
-# CATEGORY & TAGS HANDLER INSIDE MODAL
-# ============================================================
-
-def handle_modal_fields(page, post_category):
-    print("Handling Category and Tags inside modal...", flush=True)
-    page.wait_for_timeout(2000)
-
-    # 1. Category Dropdown
-    try:
-        cat_box = page.locator('.ant-modal:visible .ant-select, div[role="dialog"]:visible .ant-select, .ant-select:visible').first
-        if cat_box.is_visible():
-            cat_box.click(force=True)
-            page.wait_for_timeout(800)
-            page.keyboard.press("ArrowDown")
-            page.wait_for_timeout(400)
-            page.keyboard.press("Enter")
-            print("✓ Category selected via keyboard!", flush=True)
-            page.wait_for_timeout(800)
-    except Exception as e:
-        print(f"Category note: {e}", flush=True)
-
-    # 2. Sub-Category Dropdown
-    try:
-        all_selects = page.locator('.ant-modal:visible .ant-select, div[role="dialog"]:visible .ant-select, .ant-select:visible')
-        if all_selects.count() > 1:
-            all_selects.nth(1).click(force=True)
-            page.wait_for_timeout(800)
-            page.keyboard.press("ArrowDown")
-            page.wait_for_timeout(400)
-            page.keyboard.press("Enter")
-            print("✓ Sub-category selected via keyboard!", flush=True)
-            page.wait_for_timeout(800)
-    except Exception as e:
-        print(f"Sub-category note: {e}", flush=True)
-
-    # 3. Tags Input (if present in modal)
-    try:
-        tag_input = page.locator('.ant-modal:visible input[placeholder*="tag" i], div[role="dialog"]:visible input[placeholder*="tag" i]').first
-        if tag_input.is_visible():
-            tag_text = post_category or "blog"
-            tag_input.fill(tag_text)
-            page.keyboard.press("Enter")
-            print(f"✓ Tag added: {tag_text}", flush=True)
-            page.wait_for_timeout(500)
-    except Exception as e:
-        print(f"Tag note: {e}", flush=True)
-
-
-# ============================================================
-# PUBLISH POST
+# PUBLISH (CLEAN & PROVEN WORKING FLOW)
 # ============================================================
 
 def publish(page, post):
@@ -401,71 +346,38 @@ def publish(page, post):
     downloaded_img = download_image(post.get("thumbnail"))
     if downloaded_img:
         try:
-            file_inputs = page.locator('input[type="file"]')
-            if file_inputs.count() > 0:
-                file_inputs.first.set_input_files(downloaded_img)
-                print("✓ Thumbnail uploaded.", flush=True)
-                page.wait_for_timeout(3000)
-
-                crop_btn = page.locator('button:has-text("Confirm"), button:has-text("Crop"), button:has-text("Save")').first
-                if crop_btn.is_visible(timeout=5000):
-                    print("✓ Confirming image crop...", flush=True)
-                    crop_btn.click(force=True)
-                    page.wait_for_timeout(4000)
-
-                print("✓ Thumbnail processing finished.", flush=True)
-                page.wait_for_timeout(5000)
+            file_input = page.locator('input[type="file"]').first
+            file_input.set_input_files(downloaded_img)
+            print("✓ Thumbnail set, waiting for upload...", flush=True)
+            page.wait_for_timeout(8000)
         except Exception as e:
             print(f"❌ Thumbnail note: {e}")
 
-    # 4. FIRST PUBLISH
-    print("Attempting to click first Publish...", flush=True)
-    page.wait_for_timeout(2000)
+    # 4. FIRST PUBLISH BUTTON
+    print("Clicking first Publish button...", flush=True)
+    page.locator(
+        'button:has-text("Publish"), div[role="button"]:has-text("Publish"), span:has-text("Publish")'
+    ).last.click(force=True)
 
-    publish_btn = page.locator(
-        'button:has-text("Publish"), div[role="button"]:has-text("Publish")'
-    ).first
+    # Wait for Serey AI & Modal to pop up
+    page.wait_for_timeout(6000)
 
-    if publish_btn.is_visible():
-        publish_btn.scroll_into_view_if_needed()
-        publish_btn.click(force=True)
-        print("✓ First Publish clicked normally.", flush=True)
-    else:
-        page.evaluate('''() => {
-            const btns = Array.from(document.querySelectorAll('button, div[role="button"]'));
-            const b = btns.find(x => x.innerText && x.innerText.trim().toLowerCase() === 'publish');
-            if (b) b.click();
-        }''')
-        print("✓ First Publish triggered via JS.", flush=True)
-
-    page.wait_for_timeout(5000)
-
-    # 5. HANDLE CATEGORY & TAGS
-    handle_modal_fields(page, post.get("category", "blog"))
-
-    # 6. FINAL PUBLISH
-    print("Searching for final Publish button inside modal...", flush=True)
-    page.wait_for_timeout(2000)
-
-    final_btn = page.locator(
-        'div[role="dialog"]:visible button:has-text("Publish"), '
-        '.ant-modal:visible button.ant-btn-primary, '
-        '.ant-modal:visible button:has-text("Publish"), '
-        'button.ant-btn-primary:visible'
+    # 5. FINAL MODAL PUBLISH BUTTON
+    print("Clicking final Modal Publish button...", flush=True)
+    modal_button = page.locator(
+        'div[role="dialog"] button:has-text("Publish"), '
+        '.ant-modal-content button:has-text("Publish"), '
+        '.modal button:has-text("Publish"), '
+        'div[class*="modal"] button:has-text("Publish"), '
+        'button:has-text("Confirm"), '
+        'button:has-text("Submit"), '
+        'button:has-text("Publish")'
     ).last
 
-    try:
-        for _ in range(6):
-            if final_btn.is_enabled():
-                break
-            page.wait_for_timeout(1000)
+    modal_button.click(force=True)
+    print("✓ Final Publish button clicked!", flush=True)
 
-        final_btn.click(force=True)
-        print("✓ FINAL PUBLISH CLICKED SUCCESSFULLY!", flush=True)
-    except Exception as e:
-        print(f"Final click error: {e}", flush=True)
-
-    page.wait_for_timeout(12000)
+    page.wait_for_timeout(10000)
 
     if downloaded_img and os.path.exists(downloaded_img):
         try:
@@ -514,16 +426,12 @@ def main():
 
             for post in posts_to_run:
                 try:
-                    success = publish(page, post)
-                    if success:
+                    if publish(page, post):
                         synced.add(post["id"])
                         save_synced(synced)
                         print(f"✓ SAVED AS SYNCED: {post['id']}", flush=True)
                     else:
-                        print(f"⚠️ Publication did not confirm, auto-marking as synced to prevent infinite loop: {post['id']}", flush=True)
-                        synced.add(post["id"])
-                        save_synced(synced)
-
+                        print("⚠️ NOT SAVED AS SYNCED.", flush=True)
                 except Exception as e:
                     print(f"❌ Publish error: {e}", flush=True)
 
