@@ -23,6 +23,7 @@ SEREY_LOGIN = os.environ.get(
 
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
+# Bengali Serey
 SEREY = "https://bengali.serey.io"
 NEW_POST = f"{SEREY}/blog/post/new"
 
@@ -30,14 +31,13 @@ SYNC_FILE = "synced_posts.json"
 
 TEMP_IMAGE_PREFIX = "temp_image"
 
-# IMPORTANT:
-# Only one post per GitHub Actions run
+# One post per GitHub Actions run
 POSTS_PER_RUN = 1
 
-# Only posts from the last 365 days
+# Only last 365 days
 DAYS_LIMIT = 365
 
-# Maximum posts to collect while scanning
+# Maximum posts to scan
 MAX_POSTS_TO_SCAN = 5000
 
 STEEM_NODES = [
@@ -53,6 +53,7 @@ STEEM_NODES = [
 # ============================================================
 
 def rpc(method, params):
+
     payload = {
         "jsonrpc": "2.0",
         "method": method,
@@ -61,7 +62,9 @@ def rpc(method, params):
     }
 
     for node in STEEM_NODES:
+
         try:
+
             r = requests.post(
                 node,
                 json=payload,
@@ -75,17 +78,23 @@ def rpc(method, params):
             if "error" in data:
                 raise Exception(data["error"])
 
-            print(f"✓ RPC success: {node}", flush=True)
+            print(
+                f"✓ RPC success: {node}",
+                flush=True
+            )
 
             return data["result"]
 
         except Exception as e:
+
             print(
                 f"RPC {node} failed: {e}",
                 flush=True
             )
 
-    raise Exception("All Steem RPC nodes failed")
+    raise Exception(
+        "All Steem RPC nodes failed"
+    )
 
 
 # ============================================================
@@ -93,15 +102,18 @@ def rpc(method, params):
 # ============================================================
 
 def load_synced():
+
     if not os.path.exists(SYNC_FILE):
         return set()
 
     try:
+
         with open(
             SYNC_FILE,
             "r",
             encoding="utf-8"
         ) as f:
+
             data = json.load(f)
 
         if isinstance(data, list):
@@ -110,6 +122,7 @@ def load_synced():
         return set()
 
     except Exception as e:
+
         print(
             f"⚠ Could not read {SYNC_FILE}: {e}",
             flush=True
@@ -119,6 +132,7 @@ def load_synced():
 
 
 def save_synced(data):
+
     temp_file = SYNC_FILE + ".tmp"
 
     with open(
@@ -144,7 +158,10 @@ def save_synced(data):
 # THUMBNAIL + CLEAN BODY
 # ============================================================
 
-def extract_thumbnail_and_body(body, metadata):
+def extract_thumbnail_and_body(
+    body,
+    metadata
+):
 
     thumbnail = None
 
@@ -153,9 +170,15 @@ def extract_thumbnail_and_body(body, metadata):
     # --------------------------------------------------------
 
     try:
-        meta = json.loads(metadata or "{}")
 
-        images = meta.get("image", [])
+        meta = json.loads(
+            metadata or "{}"
+        )
+
+        images = meta.get(
+            "image",
+            []
+        )
 
         if isinstance(images, list):
 
@@ -165,6 +188,7 @@ def extract_thumbnail_and_body(body, metadata):
                     isinstance(x, str)
                     and x.startswith("http")
                 ):
+
                     thumbnail = x
                     break
 
@@ -282,7 +306,9 @@ def extract_thumbnail_and_body(body, metadata):
         stripped = line.strip()
 
         if not stripped:
+
             lines.append("")
+
             continue
 
         if re.fullmatch(
@@ -290,6 +316,7 @@ def extract_thumbnail_and_body(body, metadata):
             stripped,
             re.I
         ):
+
             continue
 
         lines.append(line)
@@ -432,14 +459,19 @@ def get_posts():
                 created_dt
                 and created_dt < cutoff_date
             ):
+
                 reached_old = True
+
                 break
 
             seen.add(post_id)
 
             body, thumbnail = (
                 extract_thumbnail_and_body(
-                    p.get("body", ""),
+                    p.get(
+                        "body",
+                        ""
+                    ),
                     p.get(
                         "json_metadata",
                         "{}"
@@ -476,6 +508,7 @@ def get_posts():
             new_author == start_author
             and new_permlink == start_permlink
         ):
+
             break
 
         start_author = new_author
@@ -485,11 +518,12 @@ def get_posts():
             len(result) < 100
             or reached_old
         ):
+
             break
 
         time.sleep(0.3)
 
-    # Oldest → newest
+    # Oldest -> newest
     posts.reverse()
 
     print(
@@ -520,7 +554,10 @@ def download_image(url):
         headers = {
             "User-Agent":
                 "Mozilla/5.0 (Windows NT 10.0; "
-                "Win64; x64) AppleWebKit/537.36",
+                "Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/140.0 Safari/537.36",
+
             "Referer":
                 "https://steemit.com/"
         }
@@ -535,7 +572,10 @@ def download_image(url):
 
         content_type = (
             r.headers
-            .get("content-type", "")
+            .get(
+                "content-type",
+                ""
+            )
             .lower()
         )
 
@@ -557,7 +597,10 @@ def download_image(url):
             file_path,
             "wb"
         ) as f:
-            f.write(r.content)
+
+            f.write(
+                r.content
+            )
 
         print(
             f"✓ Cover image saved: "
@@ -579,7 +622,7 @@ def download_image(url):
 
 
 # ============================================================
-# CLEAN TEMP IMAGE
+# REMOVE TEMP IMAGE
 # ============================================================
 
 def remove_temp_image(path):
@@ -590,7 +633,9 @@ def remove_temp_image(path):
     try:
 
         if os.path.exists(path):
+
             os.remove(path)
+
             print(
                 f"✓ Temporary image removed: {path}",
                 flush=True
@@ -621,7 +666,9 @@ def login(page):
         timeout=60000
     )
 
-    page.wait_for_timeout(5000)
+    page.wait_for_timeout(
+        5000
+    )
 
     login_buttons = page.locator(
         'a:has-text("Log in"), '
@@ -642,7 +689,9 @@ def login(page):
                 timeout=15000
             )
 
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(
+                3000
+            )
 
         except Exception as e:
 
@@ -690,20 +739,22 @@ def login(page):
             timeout=20000
         )
 
-        page.wait_for_timeout(7000)
+        page.wait_for_timeout(
+            7000
+        )
 
     print(
         f"After login URL: {page.url}",
         flush=True
     )
 
-    # Basic login verification
     current_url = page.url.lower()
 
     if (
         "/login" in current_url
         or "/register" in current_url
     ):
+
         raise Exception(
             "Serey login appears to have failed."
         )
@@ -819,7 +870,9 @@ def close_crop_modal(page):
             'div[role="dialog"]:visible'
         )
 
-        for i in range(modals.count()):
+        for i in range(
+            modals.count()
+        ):
 
             modal = modals.nth(i)
 
@@ -827,10 +880,13 @@ def close_crop_modal(page):
                 continue
 
             try:
+
                 text = modal.inner_text(
                     timeout=1000
                 ).lower()
+
             except Exception:
+
                 text = ""
 
             has_cropper = (
@@ -857,13 +913,19 @@ def close_crop_modal(page):
                     if not btn.is_visible():
                         continue
 
-                    btn_text = (
-                        btn.inner_text(
-                            timeout=1000
+                    try:
+
+                        btn_text = (
+                            btn.inner_text(
+                                timeout=1000
+                            )
+                            .strip()
+                            .lower()
                         )
-                        .strip()
-                        .lower()
-                    )
+
+                    except Exception:
+
+                        continue
 
                     if btn_text in {
                         "ok",
@@ -888,7 +950,9 @@ def close_crop_modal(page):
 
                         break
 
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(
+            2000
+        )
 
     except Exception as e:
 
@@ -899,7 +963,7 @@ def close_crop_modal(page):
 
 
 # ============================================================
-# FIND PUBLISH BUTTON
+# FIND MAIN PUBLISH BUTTON
 # ============================================================
 
 def find_main_publish_button(page):
@@ -925,37 +989,46 @@ def find_main_publish_button(page):
 
             try:
 
+                if not btn.is_visible():
+                    continue
+
+                if not btn.is_enabled():
+                    continue
+
+                text = (
+                    btn.inner_text(
+                        timeout=1000
+                    )
+                    .strip()
+                    .lower()
+                    .replace(
+                        "\n",
+                        " "
+                    )
+                )
+
                 if (
-                    btn.is_visible()
-                    and btn.is_enabled()
+                    text == "publish"
+                    or text == "প্রকাশ করুন"
                 ):
 
-                    text = (
-                        btn.inner_text(
-                            timeout=1000
-                        )
-                        .strip()
-                        .lower()
-                    )
-
-                    # Exact main button only
-                    if (
-                        text == "publish"
-                        or text == "প্রকাশ করুন"
-                    ):
-                        return btn
+                    return btn
 
             except Exception:
+
                 continue
 
     return None
 
 
 # ============================================================
-# WAIT FOR PUBLISH MODAL
+# GET PUBLISH MODAL
 # ============================================================
 
-def get_publish_modal(page, timeout_ms=10000):
+def get_publish_modal(
+    page,
+    timeout_ms=12000
+):
 
     deadline = (
         time.time()
@@ -987,9 +1060,12 @@ def get_publish_modal(page, timeout_ms=10000):
                         return modal
 
                 except Exception:
+
                     continue
 
-        page.wait_for_timeout(250)
+        page.wait_for_timeout(
+            250
+        )
 
     return None
 
@@ -998,13 +1074,19 @@ def get_publish_modal(page, timeout_ms=10000):
 # SELECT CATEGORY
 # ============================================================
 
-def select_category(page, modal, category):
+def select_category(
+    page,
+    modal,
+    category
+):
 
     if not category:
+
         print(
             "ℹ No Steem category available.",
             flush=True
         )
+
         return True
 
     try:
@@ -1035,7 +1117,9 @@ def select_category(page, modal, category):
             force=True
         )
 
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(
+            1000
+        )
 
         options = page.locator(
             '.ant-select-dropdown:not(.ant-select-dropdown-hidden) '
@@ -1058,7 +1142,6 @@ def select_category(page, modal, category):
             .lower()
         )
 
-        # First try exact category
         for i in range(
             options.count()
         ):
@@ -1097,10 +1180,9 @@ def select_category(page, modal, category):
                     return True
 
             except Exception:
+
                 continue
 
-        # If exact category is unavailable,
-        # do NOT randomly choose a category.
         print(
             f"ℹ Steem category '{category}' "
             f"was not found in Serey options. "
@@ -1109,7 +1191,11 @@ def select_category(page, modal, category):
         )
 
         try:
-            page.keyboard.press("Escape")
+
+            page.keyboard.press(
+                "Escape"
+            )
+
         except Exception:
             pass
 
@@ -1123,7 +1209,11 @@ def select_category(page, modal, category):
         )
 
         try:
-            page.keyboard.press("Escape")
+
+            page.keyboard.press(
+                "Escape"
+            )
+
         except Exception:
             pass
 
@@ -1131,44 +1221,227 @@ def select_category(page, modal, category):
 
 
 # ============================================================
-# FINAL PUBLISH BUTTON
+# FIND FINAL PUBLISH BUTTON
 # ============================================================
 
 def find_final_publish_button(modal):
 
-    selectors = [
-        'button:has-text("Publish")',
-        'button:has-text("প্রকাশ করুন")',
-        'button:has-text("Submit")',
-        'button:has-text("Confirm")',
-        'button.ant-btn-primary'
-    ]
+    # --------------------------------------------------------
+    # All visible modal controls
+    # --------------------------------------------------------
 
-    for selector in selectors:
+    candidates = modal.locator(
+        'button:visible, '
+        '[role="button"]:visible, '
+        'a:visible'
+    )
 
-        buttons = modal.locator(
-            selector
-        )
+    print(
+        f"Visible modal controls detected: "
+        f"{candidates.count()}",
+        flush=True
+    )
 
-        for i in range(
-            buttons.count() - 1,
-            -1,
-            -1
-        ):
+    # --------------------------------------------------------
+    # DEBUG: print all visible controls
+    # --------------------------------------------------------
 
-            btn = buttons.nth(i)
+    for i in range(
+        candidates.count()
+    ):
+
+        try:
+
+            element = candidates.nth(i)
+
+            text = (
+                element.inner_text(
+                    timeout=1000
+                )
+                .strip()
+                .replace(
+                    "\n",
+                    " "
+                )
+            )
+
+            aria = (
+                element.get_attribute(
+                    "aria-label"
+                )
+                or ""
+            ).strip()
+
+            title = (
+                element.get_attribute(
+                    "title"
+                )
+                or ""
+            ).strip()
 
             try:
 
-                if (
-                    btn.is_visible()
-                    and btn.is_enabled()
-                ):
-
-                    return btn
+                disabled = element.is_disabled()
 
             except Exception:
+
+                disabled = False
+
+            print(
+                f"  Modal control #{i}: "
+                f"text='{text}' "
+                f"aria='{aria}' "
+                f"title='{title}' "
+                f"disabled={disabled}",
+                flush=True
+            )
+
+        except Exception:
+
+            pass
+
+    # --------------------------------------------------------
+    # Strong text matching
+    # --------------------------------------------------------
+
+    strong_words = [
+        "publish",
+        "publish post",
+        "confirm publish",
+        "submit",
+        "confirm",
+        "post",
+        "প্রকাশ",
+        "প্রকাশ করুন",
+        "নিশ্চিত",
+        "জমা"
+    ]
+
+    for i in range(
+        candidates.count()
+    ):
+
+        try:
+
+            element = candidates.nth(i)
+
+            if not element.is_visible():
                 continue
+
+            try:
+
+                if element.is_disabled():
+                    continue
+
+            except Exception:
+                pass
+
+            text = (
+                element.inner_text(
+                    timeout=1000
+                )
+                .strip()
+                .lower()
+                .replace(
+                    "\n",
+                    " "
+                )
+            )
+
+            aria = (
+                element.get_attribute(
+                    "aria-label"
+                )
+                or ""
+            ).strip().lower()
+
+            title = (
+                element.get_attribute(
+                    "title"
+                )
+                or ""
+            ).strip().lower()
+
+            combined = (
+                f"{text} {aria} {title}"
+            )
+
+            if not any(
+                word in combined
+                for word in strong_words
+            ):
+                continue
+
+            print(
+                f"✓ Possible FINAL Publish "
+                f"control: '{text}'",
+                flush=True
+            )
+
+            return element
+
+        except Exception:
+
+            continue
+
+    # --------------------------------------------------------
+    # Ant Design primary fallback
+    # --------------------------------------------------------
+
+    primary = modal.locator(
+        'button.ant-btn-primary:visible, '
+        'button[class*="primary"]:visible, '
+        '[role="button"].ant-btn-primary:visible'
+    )
+
+    for i in range(
+        primary.count() - 1,
+        -1,
+        -1
+    ):
+
+        try:
+
+            element = primary.nth(i)
+
+            if not element.is_visible():
+                continue
+
+            try:
+
+                if element.is_disabled():
+                    continue
+
+            except Exception:
+                pass
+
+            text = (
+                element.inner_text(
+                    timeout=1000
+                )
+                .strip()
+                .replace(
+                    "\n",
+                    " "
+                )
+            )
+
+            print(
+                f"✓ Using visible primary "
+                f"modal button: '{text}'",
+                flush=True
+            )
+
+            return element
+
+        except Exception:
+
+            continue
+
+    print(
+        "❌ No usable final modal button found.",
+        flush=True
+    )
 
     return None
 
@@ -1199,7 +1472,9 @@ def verify_real_post_page(
             timeout=30000
         )
 
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(
+            5000
+        )
 
         final_url = page.url
 
@@ -1211,6 +1486,7 @@ def verify_real_post_page(
         if not is_real_post_url(
             final_url
         ):
+
             return False
 
         body_text = page.locator(
@@ -1231,7 +1507,7 @@ def verify_real_post_page(
             .lower()
         )
 
-        # Exact title
+        # Exact title match
         if (
             title_clean
             and title_clean in body_clean
@@ -1249,7 +1525,7 @@ def verify_real_post_page(
 
             return True
 
-        # Partial title verification
+        # Partial title match
         words = [
             x
             for x in re.findall(
@@ -1309,7 +1585,10 @@ def verify_real_post_page(
 # PUBLISH
 # ============================================================
 
-def publish(page, post):
+def publish(
+    page,
+    post
+):
 
     print(
         "-" * 60,
@@ -1318,7 +1597,8 @@ def publish(page, post):
 
     print(
         f"Publishing: {post['title']} "
-        f"(Steem Date: {post.get('created', 'N/A')})",
+        f"(Steem Date: "
+        f"{post.get('created', 'N/A')})",
         flush=True
     )
 
@@ -1336,7 +1616,9 @@ def publish(page, post):
             timeout=60000
         )
 
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(
+            5000
+        )
 
         # ----------------------------------------------------
         # TITLE
@@ -1353,8 +1635,6 @@ def publish(page, post):
             timeout=20000
         )
 
-        # Keep original title.
-        # Do not unnecessarily remove punctuation.
         title_box.fill(
             post["title"]
         )
@@ -1462,7 +1742,10 @@ def publish(page, post):
                 )
 
         # ----------------------------------------------------
-        # PUBLISH — ONLY ONE CLICK
+        # MAIN PUBLISH
+        #
+        # VERY IMPORTANT:
+        # ONLY ONE CLICK
         # ----------------------------------------------------
 
         print(
@@ -1475,13 +1758,16 @@ def publish(page, post):
         )
 
         publish_btn = (
-            find_main_publish_button(page)
+            find_main_publish_button(
+                page
+            )
         )
 
         if publish_btn is None:
 
             raise Exception(
-                "Main Publish button could not be found."
+                "Main Publish button "
+                "could not be found."
             )
 
         print(
@@ -1489,12 +1775,9 @@ def publish(page, post):
             flush=True
         )
 
-        # IMPORTANT:
-        # EXACTLY ONE CLICK.
-        # No JavaScript click.
-        # No second click.
         publish_btn.scroll_into_view_if_needed()
 
+        # ONLY ONE CLICK
         publish_btn.click(
             force=True,
             timeout=15000
@@ -1510,7 +1793,8 @@ def publish(page, post):
         # ----------------------------------------------------
 
         print(
-            "Waiting for Publish confirmation modal...",
+            "Waiting for Publish "
+            "confirmation modal...",
             flush=True
         )
 
@@ -1521,18 +1805,13 @@ def publish(page, post):
 
         if modal is None:
 
-            # DO NOT click Publish again.
-            # This prevents the exact problem
-            # seen in your previous log.
-
             print(
                 "❌ Publish modal did not appear.",
                 flush=True
             )
 
             print(
-                "❌ NOT clicking Publish again "
-                "to avoid duplicate/accidental submission.",
+                "❌ NOT clicking Publish again.",
                 flush=True
             )
 
@@ -1559,7 +1838,8 @@ def publish(page, post):
             return None
 
         print(
-            "✓ Publish confirmation modal opened.",
+            "✓ Publish confirmation "
+            "modal opened.",
             flush=True
         )
 
@@ -1570,12 +1850,46 @@ def publish(page, post):
         select_category(
             page,
             modal,
-            post.get("category", "")
+            post.get(
+                "category",
+                ""
+            )
         )
 
         page.wait_for_timeout(
             800
         )
+
+        # ----------------------------------------------------
+        # SAVE MODAL HTML
+        # ----------------------------------------------------
+
+        try:
+
+            with open(
+                "serey_publish_modal_debug.html",
+                "w",
+                encoding="utf-8"
+            ) as f:
+
+                f.write(
+                    modal.evaluate(
+                        "(el) => el.outerHTML"
+                    )
+                )
+
+            print(
+                "✓ Publish modal HTML saved "
+                "for debugging.",
+                flush=True
+            )
+
+        except Exception as e:
+
+            print(
+                f"Modal debug save note: {e}",
+                flush=True
+            )
 
         # ----------------------------------------------------
         # FINAL PUBLISH
@@ -1584,6 +1898,10 @@ def publish(page, post):
         print(
             "Searching for FINAL Publish button...",
             flush=True
+        )
+
+        page.wait_for_timeout(
+            1500
         )
 
         final_btn = (
@@ -1595,20 +1913,30 @@ def publish(page, post):
         if final_btn is None:
 
             print(
-                "❌ Final Publish button not found.",
+                "❌ Final Publish button "
+                "not found.",
+                flush=True
+            )
+
+            print(
+                "⚠ Post NOT submitted.",
                 flush=True
             )
 
             return None
 
         print(
-            "✓ Final Publish button found.",
+            "✓ Final Publish control found.",
             flush=True
         )
 
-        # Final button click happens ONLY ONCE
         final_btn.scroll_into_view_if_needed()
 
+        page.wait_for_timeout(
+            500
+        )
+
+        # ONLY ONE FINAL CLICK
         final_btn.click(
             force=True,
             timeout=15000
@@ -1668,9 +1996,7 @@ def publish(page, post):
                     return candidate
 
         # ----------------------------------------------------
-        # FINAL FALLBACK:
-        # Check if page stayed somewhere else.
-        # Do NOT mark synced.
+        # NO CONFIRMATION
         # ----------------------------------------------------
 
         print(
@@ -1692,7 +2018,6 @@ def publish(page, post):
 
     finally:
 
-        # Always clean temporary image
         remove_temp_image(
             downloaded_img
         )
@@ -1721,7 +2046,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # CHECK SECRETS
+    # SECRETS
     # --------------------------------------------------------
 
     if (
@@ -1738,7 +2063,7 @@ def main():
         return
 
     # --------------------------------------------------------
-    # LOAD SYNCED
+    # SYNC FILE
     # --------------------------------------------------------
 
     synced = load_synced()
@@ -1749,7 +2074,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # GET POSTS
+    # COLLECT POSTS
     # --------------------------------------------------------
 
     posts = get_posts()
@@ -1830,7 +2155,7 @@ def main():
             login(page)
 
             # ------------------------------------------------
-            # PUBLISH SELECTED POST
+            # PUBLISH
             # ------------------------------------------------
 
             for post in posts_to_run:
@@ -1843,7 +2168,7 @@ def main():
                     )
 
                     # ----------------------------------------
-                    # SUCCESS
+                    # SUCCESS ONLY
                     # ----------------------------------------
 
                     if (
@@ -1871,7 +2196,8 @@ def main():
                             flush=True
                         )
 
-                        # ONLY NOW mark as synced
+                        # IMPORTANT:
+                        # Save only after verified success.
                         synced.add(
                             post["id"]
                         )
@@ -1885,10 +2211,6 @@ def main():
                             f"{post['id']}",
                             flush=True
                         )
-
-                    # ----------------------------------------
-                    # FAILURE
-                    # ----------------------------------------
 
                     else:
 
@@ -1927,11 +2249,9 @@ def main():
                         flush=True
                     )
 
-                    # IMPORTANT:
-                    # DO NOT add failed post to synced.
                     print(
-                        "⚠ Failed post remains unsynced "
-                        "for retry.",
+                        "⚠ Failed post remains "
+                        "unsynced for retry.",
                         flush=True
                     )
 
@@ -1956,6 +2276,10 @@ def main():
         "=" * 60
     )
 
+
+# ============================================================
+# START
+# ============================================================
 
 if __name__ == "__main__":
     main()
