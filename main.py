@@ -22,7 +22,6 @@ SEREY_LOGIN = os.environ.get(
 
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-# Bengali Serey
 SEREY = "https://bengali.serey.io"
 NEW_POST = f"{SEREY}/blog/post/new"
 
@@ -454,7 +453,7 @@ def verify_real_post_page(page, url, title):
 
 
 # ============================================================
-# PUBLISH (ROBUST WITH AUTO-RETRY)
+# PUBLISH
 # ============================================================
 
 def publish(page, post):
@@ -465,10 +464,9 @@ def publish(page, post):
     page.wait_for_timeout(5000)
 
     # 1. TITLE
-    clean_title = re.sub(r'[:!]', '', post["title"]).strip()
     title_box = page.locator('input[placeholder*="title" i], textarea[placeholder*="title" i], input[placeholder*="Enter title" i]').first
     title_box.wait_for(state="visible", timeout=20000)
-    title_box.fill(clean_title)
+    title_box.fill(post["title"])
     print("✓ Title filled", flush=True)
 
     # 2. BODY
@@ -498,18 +496,23 @@ def publish(page, post):
         except Exception as e:
             print(f"❌ Thumbnail note: {e}", flush=True)
 
-    # 4. PUBLISH TRIGGER WITH JS FORCE
+    # 4. FIRST PUBLISH (CLICK BUTTON DIRECTLY)
     print("Initiating Publish sequence...", flush=True)
     page.wait_for_timeout(2000)
 
-    page.evaluate('''() => {
-        const btns = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
-        const pub = btns.find(b => b.innerText && (b.innerText.trim().toLowerCase() === 'publish' || b.innerText.includes('প্রকাশ')));
-        if (pub) {
-            pub.removeAttribute('disabled');
-            pub.click();
-        }
-    }''')
+    publish_btn = page.locator('button:has-text("Publish"), [role="button"]:has-text("Publish"), button:has-text("প্রকাশ করুন")').first
+    if publish_btn.count() > 0 and publish_btn.is_visible():
+        publish_btn.scroll_into_view_if_needed()
+        publish_btn.click(force=True)
+        print("✓ First Publish button clicked.", flush=True)
+    else:
+        page.evaluate('''() => {
+            const btns = Array.from(document.querySelectorAll('button, div[role="button"]'));
+            const pub = btns.find(b => b.innerText && (b.innerText.trim().toLowerCase() === 'publish' || b.innerText.includes('প্রকাশ')));
+            if (pub) pub.click();
+        }''')
+        print("✓ First Publish triggered via JS.", flush=True)
+
     page.wait_for_timeout(4000)
 
     # 5. MODAL & CATEGORY
@@ -537,7 +540,9 @@ def publish(page, post):
         final_btn.click(force=True)
         print("✓ FINAL PUBLISH CLICKED.", flush=True)
     else:
-        print("⚠️ Direct submitting without modal...", flush=True)
+        print("⚠️ Modal not opened, retrying primary click...", flush=True)
+        if publish_btn.is_visible():
+            publish_btn.click(force=True)
 
     print("Waiting for Serey publish response...", flush=True)
 
@@ -621,7 +626,6 @@ def main():
                     else:
                         print("", flush=True)
                         print(f"⚠️ Post could not be confirmed on Serey (likely rejected or duplicate). Auto-marking as synced to move queue forward: {post['id']}", flush=True)
-                        # আটকে না থেকে স্বয়ংক্রিয়ভাবে পরের পোস্টে চলে যাওয়া
                         synced.add(post["id"])
                         save_synced(synced)
 
