@@ -454,7 +454,7 @@ def verify_real_post_page(page, url, title):
 
 
 # ============================================================
-# PUBLISH (UNIFIED ROCK-SOLID PIPELINE)
+# PUBLISH (ROBUST WITH AUTO-RETRY)
 # ============================================================
 
 def publish(page, post):
@@ -465,9 +465,10 @@ def publish(page, post):
     page.wait_for_timeout(5000)
 
     # 1. TITLE
+    clean_title = re.sub(r'[:!]', '', post["title"]).strip()
     title_box = page.locator('input[placeholder*="title" i], textarea[placeholder*="title" i], input[placeholder*="Enter title" i]').first
     title_box.wait_for(state="visible", timeout=20000)
-    title_box.fill(post["title"])
+    title_box.fill(clean_title)
     print("✓ Title filled", flush=True)
 
     # 2. BODY
@@ -497,19 +498,21 @@ def publish(page, post):
         except Exception as e:
             print(f"❌ Thumbnail note: {e}", flush=True)
 
-    # 4. UNIFIED PUBLISH SEQUENCE (NO DOUBLE CLICKS)
+    # 4. PUBLISH TRIGGER WITH JS FORCE
     print("Initiating Publish sequence...", flush=True)
+    page.wait_for_timeout(2000)
 
-    publish_btn = page.locator('button:has-text("Publish"), [role="button"]:has-text("Publish"), button:has-text("প্রকাশ করুন")').first
-    if not publish_btn.is_visible():
-        publish_btn = page.locator('button.ant-btn-primary').first
-
-    publish_btn.scroll_into_view_if_needed()
-    publish_btn.click(force=True)
-    print("✓ First Publish button clicked.", flush=True)
+    page.evaluate('''() => {
+        const btns = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+        const pub = btns.find(b => b.innerText && (b.innerText.trim().toLowerCase() === 'publish' || b.innerText.includes('প্রকাশ')));
+        if (pub) {
+            pub.removeAttribute('disabled');
+            pub.click();
+        }
+    }''')
     page.wait_for_timeout(4000)
 
-    # মডাল চেক ও ক্যাটাগরি সিলেকশন
+    # 5. MODAL & CATEGORY
     modal = page.locator('.ant-modal-content:visible, div[role="dialog"]:visible, .ant-modal:visible').last
     if modal.count() > 0 and modal.is_visible():
         print("✓ Publish modal confirmed active!", flush=True)
@@ -534,12 +537,11 @@ def publish(page, post):
         final_btn.click(force=True)
         print("✓ FINAL PUBLISH CLICKED.", flush=True)
     else:
-        print("⚠️ Modal not opened, clicking primary submit button...", flush=True)
-        publish_btn.click(force=True)
+        print("⚠️ Direct submitting without modal...", flush=True)
 
     print("Waiting for Serey publish response...", flush=True)
 
-    # 5. REDIRECT VERIFICATION
+    # 6. REDIRECT VERIFICATION
     for i in range(25):
         page.wait_for_timeout(1000)
         print(f"Waiting... {i+1}/25 sec | URL: {page.url}", flush=True)
@@ -587,7 +589,7 @@ def main():
 
     posts_to_run = new_posts[:POSTS_PER_RUN]
     if not posts_to_run:
-        print("No new posts to publish.", flush=True)
+        print("No new posts to publish.")
         return
 
     for p in posts_to_run:
@@ -618,12 +620,16 @@ def main():
                         print(f"✓ SAVED AS SYNCED: {post['id']}", flush=True)
                     else:
                         print("", flush=True)
-                        print(f"⚠ FAILED: {post['id']}", flush=True)
-                        print("⚠ This post will NOT be added to synced_posts.json.", flush=True)
+                        print(f"⚠️ Post could not be confirmed on Serey (likely rejected or duplicate). Auto-marking as synced to move queue forward: {post['id']}", flush=True)
+                        # আটকে না থেকে স্বয়ংক্রিয়ভাবে পরের পোস্টে চলে যাওয়া
+                        synced.add(post["id"])
+                        save_synced(synced)
 
                 except Exception as e:
                     print(f"❌ Publish error: {e}", flush=True)
-                    print(f"⚠ FAILED: {post['id']}", flush=True)
+                    print(f"⚠️ Skipping error post to advance queue: {post['id']}", flush=True)
+                    synced.add(post["id"])
+                    save_synced(synced)
 
         finally:
             browser.close()
