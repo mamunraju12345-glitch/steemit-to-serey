@@ -22,17 +22,15 @@ SEREY_LOGIN = os.environ.get(
 
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-# IMPORTANT:
-# This sync is for Bengali Serey.
+# Bengali Serey
 SEREY = "https://bengali.serey.io"
 NEW_POST = f"{SEREY}/blog/post/new"
 
 SYNC_FILE = "synced_posts.json"
+TEMP_IMAGE_PREFIX = "temp_image"
 
 POSTS_PER_RUN = 1
 DAYS_LIMIT = 365
-
-TEMP_IMAGE_PREFIX = "temp_image"
 
 STEEM_NODES = [
     "https://api.steemit.com",
@@ -63,21 +61,16 @@ def rpc(method, params):
             )
 
             r.raise_for_status()
-
             data = r.json()
 
             if "error" in data:
                 raise Exception(data["error"])
 
             print(f"✓ RPC success: {node}", flush=True)
-
             return data["result"]
 
         except Exception as e:
-            print(
-                f"RPC {node} failed: {e}",
-                flush=True
-            )
+            print(f"RPC {node} failed: {e}", flush=True)
 
     raise Exception("All Steem RPC nodes failed")
 
@@ -87,55 +80,25 @@ def rpc(method, params):
 # ============================================================
 
 def load_synced():
-
     if not os.path.exists(SYNC_FILE):
         return set()
 
     try:
-        with open(
-            SYNC_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
+        with open(SYNC_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-
         if isinstance(data, list):
             return set(data)
-
         return set()
-
     except Exception as e:
-
-        print(
-            f"⚠ Could not read {SYNC_FILE}: {e}",
-            flush=True
-        )
-
+        print(f"⚠ Could not read {SYNC_FILE}: {e}", flush=True)
         return set()
 
 
 def save_synced(data):
-
     temp_file = SYNC_FILE + ".tmp"
-
-    with open(
-        temp_file,
-        "w",
-        encoding="utf-8"
-    ) as f:
-
-        json.dump(
-            sorted(data),
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
-
-    os.replace(
-        temp_file,
-        SYNC_FILE
-    )
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(sorted(data), f, ensure_ascii=False, indent=2)
+    os.replace(temp_file, SYNC_FILE)
 
 
 # ============================================================
@@ -143,116 +106,43 @@ def save_synced(data):
 # ============================================================
 
 def extract_thumbnail_and_body(body, metadata):
-
     thumbnail = None
 
     try:
-        meta = json.loads(
-            metadata or "{}"
-        )
-
-        images = meta.get(
-            "image",
-            []
-        )
-
+        meta = json.loads(metadata or "{}")
+        images = meta.get("image", [])
         if isinstance(images, list):
             for x in images:
-                if (
-                    isinstance(x, str)
-                    and x.startswith("http")
-                ):
+                if isinstance(x, str) and x.startswith("http"):
                     thumbnail = x
                     break
-
     except Exception:
         pass
 
     if not thumbnail:
-        m = re.search(
-            r'!\[[^\]]*\]\((https?://[^)\s]+)',
-            body,
-            re.I
-        )
+        m = re.search(r'!\[[^\]]*\]\((https?://[^)\s]+)', body, re.I)
         if m:
             thumbnail = m.group(1)
 
     if not thumbnail:
-        m = re.search(
-            r'<img[^>]+src=["\']'
-            r'(https?://[^"\'>\s]+)',
-            body,
-            re.I
-        )
+        m = re.search(r'<img[^>]+src=["\'](https?://[^"\'>\s]+)', body, re.I)
         if m:
             thumbnail = m.group(1)
 
     if not thumbnail:
-        m = re.search(
-            r'(https?://\S+\.(?:jpg|jpeg|png|gif|webp)'
-            r'(?:\?\S*)?)',
-            body,
-            re.I
-        )
+        m = re.search(r'(https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?)', body, re.I)
         if m:
             thumbnail = m.group(1)
 
     # Clean body
-    body = re.sub(
-        r'!\[[^\]]*\]\(\s*https?://[^)\s]+\s*\)',
-        '',
-        body,
-        flags=re.I
-    )
-
-    body = re.sub(
-        r'<img\b[^>]*>',
-        '',
-        body,
-        flags=re.I
-    )
-
-    body = re.sub(
-        r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)'
-        r'(?:\?\S*)?',
-        '',
-        body,
-        flags=re.I
-    )
-
-    body = re.sub(
-        r'<[^>]+>',
-        '',
-        body
-    )
-
-    body = re.sub(
-        r'^\s{0,3}#{1,6}\s*',
-        '',
-        body,
-        flags=re.M
-    )
-
-    body = re.sub(
-        r'\*\*(.*?)\*\*',
-        r'\1',
-        body,
-        flags=re.S
-    )
-
-    body = re.sub(
-        r'(?<!\*)\*(.*?)\*(?!\*)',
-        r'\1',
-        body,
-        flags=re.S
-    )
-
-    body = re.sub(
-        r'\[([^\]]+)\]\((https?://[^)]+)\)',
-        r'\1',
-        body,
-        flags=re.I
-    )
+    body = re.sub(r'!\[[^\]]*\]\(\s*https?://[^)\s]+\s*\)', '', body, flags=re.I)
+    body = re.sub(r'<img\b[^>]*>', '', body, flags=re.I)
+    body = re.sub(r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?', '', body, flags=re.I)
+    body = re.sub(r'<[^>]+>', '', body)
+    body = re.sub(r'^\s{0,3}#{1,6}\s*', '', body, flags=re.M)
+    body = re.sub(r'\*\*(.*?)\*\*', r'\1', body, flags=re.S)
+    body = re.sub(r'(?<!\*)\*(.*?)\*(?!\*)', r'\1', body, flags=re.S)
+    body = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'\1', body, flags=re.I)
 
     lines = []
     for line in body.splitlines():
@@ -276,14 +166,8 @@ def extract_thumbnail_and_body(body, metadata):
 # ============================================================
 
 def parse_steem_date(date_str):
-
     try:
-        return datetime.strptime(
-            date_str,
-            "%Y-%m-%dT%H:%M:%S"
-        ).replace(
-            tzinfo=timezone.utc
-        )
+        return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
     except Exception:
         return None
 
@@ -293,36 +177,18 @@ def parse_steem_date(date_str):
 # ============================================================
 
 def get_posts():
+    print(f"Collecting posts from @{STEEM_USERNAME} for the last {DAYS_LIMIT} days...", flush=True)
 
-    print(
-        f"Collecting posts from @{STEEM_USERNAME} "
-        f"for the last {DAYS_LIMIT} days...",
-        flush=True
-    )
-
-    cutoff_date = (
-        datetime.now(timezone.utc)
-        - timedelta(days=DAYS_LIMIT)
-    )
-
-    print(
-        f"Post cut-off date: "
-        f"{cutoff_date.strftime('%Y-%m-%d')}",
-        flush=True
-    )
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=DAYS_LIMIT)
+    print(f"Post cut-off date: {cutoff_date.strftime('%Y-%m-%d')}", flush=True)
 
     posts = []
     seen = set()
-
     start_author = None
     start_permlink = None
     reached_old = False
 
-    while (
-        len(posts) < 5000
-        and not reached_old
-    ):
-
+    while len(posts) < 5000 and not reached_old:
         params = {
             "tag": STEEM_USERNAME,
             "limit": 100
@@ -332,36 +198,24 @@ def get_posts():
             params["start_author"] = start_author
             params["start_permlink"] = start_permlink
 
-        result = rpc(
-            "condenser_api.get_discussions_by_blog",
-            params
-        )
-
+        result = rpc("condenser_api.get_discussions_by_blog", params)
         if not result:
             break
 
-        batch = (
-            result[1:]
-            if start_author
-            else result
-        )
-
+        batch = result[1:] if start_author else result
         if not batch:
             break
 
         for p in batch:
-
             if p.get("author") != STEEM_USERNAME:
                 continue
 
             author = p.get("author", "")
             permlink = p.get("permlink", "")
-
             if not permlink:
                 continue
 
             post_id = f"{author}/{permlink}"
-
             if post_id in seen:
                 continue
 
@@ -374,53 +228,37 @@ def get_posts():
 
             seen.add(post_id)
 
-            body, thumbnail = (
-                extract_thumbnail_and_body(
-                    p.get("body", ""),
-                    p.get("json_metadata", "{}")
-                )
+            body, thumbnail = extract_thumbnail_and_body(
+                p.get("body", ""),
+                p.get("json_metadata", "{}")
             )
 
-            posts.append(
-                {
-                    "id": post_id,
-                    "title": p.get("title", "").strip(),
-                    "body": body,
-                    "thumbnail": thumbnail,
-                    "created": created_str,
-                    "category": p.get("category", "")
-                }
-            )
+            posts.append({
+                "id": post_id,
+                "title": p.get("title", "").strip(),
+                "body": body,
+                "thumbnail": thumbnail,
+                "created": created_str,
+                "category": p.get("category", "")
+            })
 
         last = result[-1]
         new_author = last.get("author")
         new_permlink = last.get("permlink")
 
-        if (
-            new_author == start_author
-            and new_permlink == start_permlink
-        ):
+        if new_author == start_author and new_permlink == start_permlink:
             break
 
         start_author = new_author
         start_permlink = new_permlink
 
-        if (
-            len(result) < 100
-            or reached_old
-        ):
+        if len(result) < 100 or reached_old:
             break
 
         time.sleep(0.3)
 
     posts.reverse()
-
-    print(
-        f"Total posts collected from the last "
-        f"{DAYS_LIMIT} days: {len(posts)}",
-        flush=True
-    )
-
+    print(f"Total posts collected from the last {DAYS_LIMIT} days: {len(posts)}", flush=True)
     return posts
 
 
@@ -429,68 +267,32 @@ def get_posts():
 # ============================================================
 
 def download_image(url):
-
     if not url:
         return None
 
     try:
-        print(
-            f"Downloading cover thumbnail: {url}",
-            flush=True
-        )
-
+        print(f"Downloading cover thumbnail: {url}", flush=True)
         headers = {
-            "User-Agent":
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36",
-            "Referer":
-                "https://steemit.com/"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://steemit.com/"
         }
-
-        r = requests.get(
-            url,
-            timeout=25,
-            headers=headers
-        )
-
+        r = requests.get(url, timeout=25, headers=headers)
         r.raise_for_status()
 
-        content_type = (
-            r.headers
-            .get("content-type", "")
-            .lower()
-        )
-
-        ext = (
-            mimetypes.guess_extension(
-                content_type.split(";")[0]
-            )
-            or ".jpg"
-        )
-
+        content_type = r.headers.get("content-type", "").lower()
+        ext = mimetypes.guess_extension(content_type.split(";")[0]) or ".jpg"
         if ext == ".jpe":
             ext = ".jpg"
 
         file_path = f"{TEMP_IMAGE_PREFIX}{ext}"
-
         with open(file_path, "wb") as f:
             f.write(r.content)
 
-        print(
-            f"✓ Cover image saved: "
-            f"{file_path} "
-            f"({len(r.content)} bytes)",
-            flush=True
-        )
-
+        print(f"✓ Cover image saved: {file_path} ({len(r.content)} bytes)", flush=True)
         return file_path
 
     except Exception as e:
-        print(
-            f"❌ Cover image download failed: {e}",
-            flush=True
-        )
+        print(f"❌ Cover image download failed: {e}", flush=True)
         return None
 
 
@@ -499,51 +301,24 @@ def download_image(url):
 # ============================================================
 
 def login(page):
+    print("Logging into Serey...", flush=True)
 
-    print(
-        "Logging into Serey...",
-        flush=True
-    )
-
-    page.goto(
-        SEREY,
-        wait_until="domcontentloaded",
-        timeout=60000
-    )
-
+    page.goto(SEREY, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(5000)
 
     login_buttons = page.locator(
-        'a:has-text("Log in"), '
-        'button:has-text("Log in"), '
-        'a:has-text("Log In"), '
-        'button:has-text("Log In")'
+        'a:has-text("Log in"), button:has-text("Log in"), a:has-text("Log In"), button:has-text("Log In")'
     )
 
-    if (
-        login_buttons.count() > 0
-        and login_buttons.first.is_visible()
-    ):
-
+    if login_buttons.count() > 0 and login_buttons.first.is_visible():
         try:
-            login_buttons.first.click(
-                force=True,
-                timeout=15000
-            )
+            login_buttons.first.click(force=True, timeout=15000)
             page.wait_for_timeout(3000)
         except Exception as e:
             print(f"Login button click note: {e}", flush=True)
 
-        user_in = page.locator(
-            'input[placeholder*="Username" i], '
-            'input[type="text"]'
-        ).first
-
-        pass_in = page.locator(
-            'input[placeholder*="Private Key" i], '
-            'input[placeholder*="Password" i], '
-            'input[type="password"]'
-        ).first
+        user_in = page.locator('input[placeholder*="Username" i], input[type="text"]').first
+        pass_in = page.locator('input[placeholder*="Private Key" i], input[placeholder*="Password" i], input[type="password"]').first
 
         user_in.wait_for(state="visible", timeout=20000)
         pass_in.wait_for(state="visible", timeout=20000)
@@ -551,25 +326,11 @@ def login(page):
         user_in.fill(SEREY_LOGIN)
         pass_in.fill(SEREY_PASSWORD)
 
-        page.locator(
-            'button:has-text("Log in"), '
-            'button:has-text("Log In")'
-        ).last.click(
-            force=True,
-            timeout=20000
-        )
-
+        page.locator('button:has-text("Log in"), button:has-text("Log In")').last.click(force=True, timeout=20000)
         page.wait_for_timeout(7000)
 
-    print(
-        f"After login URL: {page.url}",
-        flush=True
-    )
-
-    print(
-        "✓ LOGGED INTO SEREY SUCCESSFULLY!",
-        flush=True
-    )
+    print(f"After login URL: {page.url}", flush=True)
+    print("✓ LOGGED INTO SEREY SUCCESSFULLY!", flush=True)
 
 
 # ============================================================
@@ -577,27 +338,21 @@ def login(page):
 # ============================================================
 
 def normalize_url(url):
-
     if not url:
         return None
-
     url = str(url).strip()
-
     if not url:
         return None
-
     if url.startswith("//"):
         url = "https:" + url
     elif url.startswith("/"):
         url = SEREY + url
     elif not url.startswith("http"):
         return None
-
     return url.split("#")[0]
 
 
 def is_real_post_url(url):
-
     url = normalize_url(url)
     if not url:
         return False
@@ -608,15 +363,8 @@ def is_real_post_url(url):
         path = parsed.path.rstrip("/")
 
         bad_parts = [
-            "/blog/post/new",
-            "/my-activity",
-            "/activity",
-            "/profile",
-            "/posts",
-            "/followers",
-            "/following",
-            "/login",
-            "/register"
+            "/blog/post/new", "/my-activity", "/activity", "/profile",
+            "/posts", "/followers", "/following", "/login", "/register"
         ]
 
         lower_path = path.lower()
@@ -624,194 +372,40 @@ def is_real_post_url(url):
             if bad in lower_path:
                 return False
 
-        m = re.match(
-            r"^/authors/([^/]+)/([^/]+)$",
-            path,
-            re.I
-        )
-
+        m = re.match(r"^/authors/([^/]+)/([^/]+)$", path, re.I)
         if not m:
             return False
 
-        username = (
-            m.group(1)
-            .replace("@", "")
-            .lower()
-        )
-
-        expected_user = (
-            SEREY_LOGIN
-            .replace("@", "")
-            .lower()
-        )
-
+        username = m.group(1).replace("@", "").lower()
+        expected_user = SEREY_LOGIN.replace("@", "").lower()
         if username != expected_user:
             return False
 
         return True
-
     except Exception:
         return False
 
 
 # ============================================================
-# CLOSE CROP MODAL & WAIT UNTIL COMPLETELY CLOSED
+# CLOSE CROP MODAL
 # ============================================================
 
 def close_crop_modal(page):
-
     try:
         modals = page.locator(".ant-modal-wrap:visible, div[role=\"dialog\"]:visible")
-        count = modals.count()
-
-        if count == 0:
-            return
-
-        for i in range(count):
+        for i in range(modals.count()):
             modal = modals.nth(i)
-            try:
-                text = modal.inner_text(timeout=1000).lower()
-            except Exception:
-                text = ""
-
-            if (
-                "crop" in text
-                or modal.locator('[data-testid="cropper"]').count() > 0
-            ):
+            text = modal.inner_text(timeout=1000).lower() if modal.is_visible() else ""
+            if "crop" in text or modal.locator('[data-testid="cropper"]').count() > 0:
                 buttons = modal.locator("button")
                 for j in range(buttons.count()):
-                    try:
-                        btn = buttons.nth(j)
-                        if not btn.is_visible():
-                            continue
-
-                        txt = btn.inner_text().strip().lower()
-                        if txt in {"ok", "confirm", "done", "save", "নিশ্চিত করুন"}:
-                            print("✓ Confirming image crop...", flush=True)
-                            btn.click(force=True)
-                            page.wait_for_timeout(2000)
-                            break
-                    except Exception:
-                        continue
-
-        # নিশ্চিত করা যে ক্রপ মডালের পর্দা স্ক্রিন থেকে পুরোপুরি গায়েব হয়েছে
-        for _ in range(8):
-            if page.locator('.ant-modal-wrap:visible, div[role="dialog"]:visible').count() == 0:
-                break
-            page.wait_for_timeout(500)
-
-    except Exception:
-        pass
-
-
-# ============================================================
-# CLICK FIRST PUBLISH
-# ============================================================
-
-def click_first_publish(page):
-
-    print("Attempting to click first Publish...", flush=True)
-
-    for attempt in range(5):
-
-        buttons = page.locator('button:has-text("Publish"), a:has-text("Publish"), [role="button"]:has-text("Publish")')
-        count = buttons.count()
-
-        print(f"Publish buttons detected: {count}", flush=True)
-
-        if count > 0:
-            btn = buttons.first
-            try:
-                btn.scroll_into_view_if_needed(timeout=5000)
-            except Exception:
-                pass
-
-            try:
-                btn.click(force=True, timeout=10000)
-                print("✓ First Publish clicked normally.", flush=True)
-                page.wait_for_timeout(3000)
-
-                # নিশ্চিতভাবে চেক করা আসল পাবলিশ মডাল ওপেন হয়েছে কিনা
-                if page.locator('.ant-modal-wrap:visible, div[role="dialog"]:visible').count() > 0:
-                    return True
-            except Exception as e:
-                print(f"Publish click attempt {attempt+1} note: {e}", flush=True)
-
+                    btn = buttons.nth(j)
+                    if btn.is_visible() and btn.inner_text().strip().lower() in {"ok", "confirm", "done", "save", "নিশ্চিত করুন"}:
+                        print("✓ Confirming image crop...", flush=True)
+                        btn.click(force=True)
+                        page.wait_for_timeout(2500)
+                        break
         page.wait_for_timeout(2000)
-
-    return (
-        page.locator('.ant-modal-wrap:visible, div[role="dialog"]:visible').count() > 0
-    )
-
-
-# ============================================================
-# CLICK FINAL PUBLISH WITH RECOVERY
-# ============================================================
-
-def click_final_publish(page):
-
-    print("Searching for final Publish button...", flush=True)
-    page.wait_for_timeout(1500)
-
-    # যদি কোনো কারণে মডাল বন্ধ হয়ে যায়, আবার First Publish চেপে ওপেন করা
-    if page.locator('.ant-modal-wrap:visible, div[role="dialog"]:visible').count() == 0:
-        print("⚠️ Modal was dismissed, recovering by re-clicking first Publish...", flush=True)
-        btn = page.locator('button:has-text("Publish"), [role="button"]:has-text("Publish")').first
-        if btn.is_visible():
-            btn.click(force=True)
-            page.wait_for_timeout(3000)
-
-    modal = page.locator('.ant-modal-wrap:visible, div[role="dialog"]:visible').last
-
-    if modal.count() == 0:
-        print("❌ Publish modal not found.", flush=True)
-        return False
-
-    buttons = modal.locator("button")
-    candidates = []
-
-    for i in range(buttons.count()):
-        try:
-            btn = buttons.nth(i)
-            if not btn.is_visible():
-                continue
-
-            txt = btn.inner_text().strip().lower()
-            if txt in {"publish", "submit", "confirm", "প্রকাশ করুন"}:
-                candidates.append(btn)
-        except Exception:
-            continue
-
-    print(f"Final modal action buttons: {len(candidates)}", flush=True)
-
-    if not candidates:
-        candidates = [modal.locator("button.ant-btn-primary").last]
-
-    for btn in reversed(candidates):
-        try:
-            print("Trying final Publish click...", flush=True)
-            btn.scroll_into_view_if_needed(timeout=5000)
-            btn.click(force=True, timeout=10000)
-            print("✓ FINAL PUBLISH CLICKED.", flush=True)
-            return True
-        except Exception as e:
-            print(f"Final click error: {e}", flush=True)
-
-    return False
-
-
-# ============================================================
-# SAVE DEBUG HTML
-# ============================================================
-
-def save_debug(page):
-
-    try:
-        filename = f"serey_debug_{int(time.time())}.html"
-        html = page.content()
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(html)
-        print(f"✓ Debug HTML saved: {filename}", flush=True)
     except Exception:
         pass
 
@@ -821,7 +415,6 @@ def save_debug(page):
 # ============================================================
 
 def verify_real_post_page(page, url, title):
-
     if not is_real_post_url(url):
         return False
 
@@ -837,12 +430,7 @@ def verify_real_post_page(page, url, title):
         if not is_real_post_url(final_url):
             return False
 
-        body_text = ""
-        try:
-            body_text = page.locator("body").inner_text(timeout=10000)
-        except Exception:
-            pass
-
+        body_text = page.locator("body").inner_text(timeout=10000)
         title_clean = title.strip().lower()
         body_clean = body_text.strip().lower()
 
@@ -860,50 +448,30 @@ def verify_real_post_page(page, url, title):
                 return True
 
         return False
-
     except Exception as e:
         print(f"❌ Post page verification failed: {e}", flush=True)
         return False
 
 
 # ============================================================
-# PUBLISH
+# PUBLISH (UNIFIED ROCK-SOLID PIPELINE)
 # ============================================================
 
 def publish(page, post):
-
     print("-" * 60, flush=True)
-    print(
-        f"Publishing: {post['title']} "
-        f"(Steem Date: {post.get('created', 'N/A')})",
-        flush=True
-    )
+    print(f"Publishing: {post['title']} (Steem Date: {post.get('created', 'N/A')})", flush=True)
 
-    page.goto(
-        NEW_POST,
-        wait_until="domcontentloaded",
-        timeout=60000
-    )
-
+    page.goto(NEW_POST, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(5000)
 
     # 1. TITLE
-    title_box = page.locator(
-        'input[placeholder*="title" i], '
-        'textarea[placeholder*="title" i], '
-        'input[placeholder*="Enter title" i]'
-    ).first
-
+    title_box = page.locator('input[placeholder*="title" i], textarea[placeholder*="title" i], input[placeholder*="Enter title" i]').first
     title_box.wait_for(state="visible", timeout=20000)
     title_box.fill(post["title"])
     print("✓ Title filled", flush=True)
 
     # 2. BODY
-    editor = page.locator(
-        '.ql-editor, '
-        'div[contenteditable="true"]'
-    ).first
-
+    editor = page.locator('.ql-editor, div[contenteditable="true"]').first
     editor.wait_for(state="visible", timeout=20000)
     try:
         editor.fill(post["body"])
@@ -919,55 +487,59 @@ def publish(page, post):
     if downloaded_img:
         try:
             file_inputs = page.locator('input[type="file"]')
-            count = file_inputs.count()
-            print(f"File inputs detected: {count}", flush=True)
-
-            if count > 0:
+            if file_inputs.count() > 0:
                 file_inputs.first.set_input_files(downloaded_img)
                 print("✓ Thumbnail uploaded.", flush=True)
                 page.wait_for_timeout(4000)
-
-                # ক্রপ মডাল নিশ্চিত করা
                 close_crop_modal(page)
                 print("✓ Thumbnail processing finished.", flush=True)
-                page.wait_for_timeout(2000)
+                page.wait_for_timeout(3000)
         except Exception as e:
             print(f"❌ Thumbnail note: {e}", flush=True)
 
-    # 4. FIRST PUBLISH
-    if not click_first_publish(page):
-        print("❌ Could not open Publish modal.", flush=True)
-        save_debug(page)
-        return None
+    # 4. UNIFIED PUBLISH SEQUENCE (NO DOUBLE CLICKS)
+    print("Initiating Publish sequence...", flush=True)
 
-    print("✓ Publish modal opened.", flush=True)
+    publish_btn = page.locator('button:has-text("Publish"), [role="button"]:has-text("Publish"), button:has-text("প্রকাশ করুন")').first
+    if not publish_btn.is_visible():
+        publish_btn = page.locator('button.ant-btn-primary').first
 
-    # 5. CATEGORY SELECTION IN MODAL
-    try:
-        modal = page.locator('.ant-modal-wrap:visible, div[role="dialog"]:visible').last
-        select_btn = modal.locator('.ant-select-selector:visible, .ant-select:visible').first
-        if select_btn.is_visible():
-            select_btn.click(force=True)
-            page.wait_for_timeout(1200)
+    publish_btn.scroll_into_view_if_needed()
+    publish_btn.click(force=True)
+    print("✓ First Publish button clicked.", flush=True)
+    page.wait_for_timeout(4000)
 
-            options = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, [role="option"]:visible')
-            if options.count() > 0:
-                option_name = options.first.inner_text().strip()
-                options.first.click(force=True)
-                print(f"✓ Category selected: {option_name}", flush=True)
-                page.wait_for_timeout(1000)
-    except Exception as e:
-        print(f"Category selection note: {e}", flush=True)
+    # মডাল চেক ও ক্যাটাগরি সিলেকশন
+    modal = page.locator('.ant-modal-content:visible, div[role="dialog"]:visible, .ant-modal:visible').last
+    if modal.count() > 0 and modal.is_visible():
+        print("✓ Publish modal confirmed active!", flush=True)
 
-    # 6. FINAL PUBLISH
-    if not click_final_publish(page):
-        print("❌ Final Publish button could not be clicked.", flush=True)
-        save_debug(page)
-        return None
+        try:
+            cat_select = modal.locator('.ant-select-selector:visible, .ant-select:visible').first
+            if cat_select.is_visible():
+                cat_select.click(force=True)
+                page.wait_for_timeout(1200)
+                opt = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, [role="option"]:visible').first
+                if opt.is_visible():
+                    opt_name = opt.inner_text().strip()
+                    opt.click(force=True)
+                    print(f"✓ Category selected: {opt_name}", flush=True)
+                    page.wait_for_timeout(1000)
+        except Exception as e:
+            print(f"Category selection note: {e}", flush=True)
+
+        # Final Publish inside modal
+        print("Clicking Final Submit button inside modal...", flush=True)
+        final_btn = modal.locator('button:has-text("Publish"), button.ant-btn-primary, button:has-text("Submit"), button:has-text("Confirm"), button:has-text("প্রকাশ করুন")').last
+        final_btn.click(force=True)
+        print("✓ FINAL PUBLISH CLICKED.", flush=True)
+    else:
+        print("⚠️ Modal not opened, clicking primary submit button...", flush=True)
+        publish_btn.click(force=True)
 
     print("Waiting for Serey publish response...", flush=True)
 
-    # 7. REDIRECT VERIFICATION
+    # 5. REDIRECT VERIFICATION
     for i in range(25):
         page.wait_for_timeout(1000)
         print(f"Waiting... {i+1}/25 sec | URL: {page.url}", flush=True)
@@ -983,8 +555,6 @@ def publish(page, post):
                         pass
                 return candidate
 
-    save_debug(page)
-
     if downloaded_img and os.path.exists(downloaded_img):
         try:
             os.remove(downloaded_img)
@@ -999,17 +569,12 @@ def publish(page, post):
 # ============================================================
 
 def main():
-
     print("=" * 60)
     print("STEEM -> BENGALI SEREY AUTO SYNC")
     print("LAST 365 DAYS -> OLDEST TO NEWEST")
     print("=" * 60)
 
-    if (
-        not STEEM_USERNAME
-        or not SEREY_LOGIN
-        or not SEREY_PASSWORD
-    ):
+    if not STEEM_USERNAME or not SEREY_LOGIN or not SEREY_PASSWORD:
         print("❌ Error: Missing Environment Secrets!", flush=True)
         return
 
