@@ -2,7 +2,10 @@ name: Steemit to Serey Auto Sync
 
 on:
   schedule:
-    - cron: '0 0,12 * * *'
+    # 00:00 UTC = 8:00 AM Malaysia Time
+    # 10:00 UTC = 6:00 PM Malaysia Time
+    # 13:00 UTC = 9:00 PM Malaysia Time
+    - cron: '0 0,10,13 * * *'
   workflow_dispatch:
 
 permissions:
