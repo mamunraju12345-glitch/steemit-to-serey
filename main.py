@@ -1951,7 +1951,14 @@ def publish(page, post):
     page.wait_for_timeout(
         5000
     )
-
+# কুকি নোটিশ / ওভারলে রিমুভ করার কোড (যদি থাকে)
+    try:
+        page.evaluate("""() => {
+            const overlay = document.querySelector('.no-cookie-notice-overlay');
+            if (overlay) overlay.remove();
+        }""")
+    except Exception:
+        pass
     # --------------------------------------------------------
     # TITLE
     # --------------------------------------------------------
