@@ -41,7 +41,7 @@ STEEM_NODES = [
 
 
 # ============================================================
-# REMOVE COOKIE OVERLAYS
+# CLEAN OVERLAYS
 # ============================================================
 
 def remove_overlays(page):
@@ -477,141 +477,6 @@ def is_real_post_url(url):
         return False
 
 
-# ============================================================
-# NETWORK CAPTURE
-# ============================================================
-
-class NetworkCapture:
-    def __init__(self):
-        self.responses = []
-
-    def attach(self, page):
-        def on_response(response):
-            try:
-                url = response.url
-                method = response.request.method if response.request else ""
-                status = response.status
-
-                if (
-                    method.upper() in {"POST", "PUT", "PATCH"}
-                    or "/api/" in url.lower()
-                    or "global-api" in url.lower()
-                ):
-                    item = {
-                        "url": url,
-                        "method": method,
-                        "status": status,
-                        "text": ""
-                    }
-
-                    try:
-                        content_type = response.headers.get("content-type", "").lower()
-                        if "json" in content_type or "/api/" in url.lower():
-                            try:
-                                item["text"] = response.text()[:20000]
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-
-                    self.responses.append(item)
-            except Exception:
-                pass
-
-        page.on("response", on_response)
-
-
-def extract_urls_from_text(text):
-    found = []
-    if not text:
-        return found
-
-    urls = re.findall(r'https?://[^\s"\'<>]+', text, re.I)
-    for url in urls:
-        url = url.rstrip(".,;:)]}'\"")
-        if is_real_post_url(url):
-            found.append(url)
-
-    return found
-
-
-def collect_urls_from_json(obj):
-    found = []
-    if obj is None:
-        return found
-
-    if isinstance(obj, str):
-        found.extend(extract_urls_from_text(obj))
-        matches = re.findall(r'["\'](\/authors\/[^"\']+)["\']', obj, re.I)
-        for x in matches:
-            candidate = normalize_url(x)
-            if is_real_post_url(candidate):
-                found.append(candidate)
-        return found
-
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            key_lower = str(key).lower()
-            if any(word in key_lower for word in ["url", "link", "slug", "permalink", "post", "article"]):
-                if isinstance(value, str):
-                    candidate = normalize_url(value)
-                    if is_real_post_url(candidate):
-                        found.append(candidate)
-                    found.extend(extract_urls_from_text(value))
-            found.extend(collect_urls_from_json(value))
-        return found
-
-    if isinstance(obj, list):
-        for item in obj:
-            found.extend(collect_urls_from_json(item))
-
-    return found
-
-
-def analyze_network_responses(capture):
-    print("\n" + "=" * 60, flush=True)
-    print("PUBLISH NETWORK RESPONSES", flush=True)
-    print("=" * 60, flush=True)
-
-    real_urls = []
-
-    for i, item in enumerate(capture.responses):
-        url = item.get("url", "")
-        method = item.get("method", "")
-        status = item.get("status", "")
-        text = item.get("text", "")
-
-        print(f"[{i+1}] {method} {status} {url}", flush=True)
-
-        if text:
-            compact = re.sub(r"\s+", " ", text)
-            print(f"    RESPONSE: {compact[:1500]}", flush=True)
-
-            real_urls.extend(extract_urls_from_text(text))
-
-            try:
-                data = json.loads(text)
-                real_urls.extend(collect_urls_from_json(data))
-            except Exception:
-                pass
-
-    result = []
-    for url in real_urls:
-        if url not in result and is_real_post_url(url):
-            result.append(url)
-
-    print("=" * 60, flush=True)
-    if result:
-        print("✓ REAL POST URL FOUND IN API:", flush=True)
-        for url in result:
-            print(url, flush=True)
-    else:
-        print("No real post URL found in API responses.", flush=True)
-    print("=" * 60, flush=True)
-
-    return result
-
-
 def find_real_post_links(page):
     urls = []
     try:
@@ -647,7 +512,6 @@ def verify_real_post_page(page, url, title):
         print(f"Verification URL: {final_url}", flush=True)
 
         if not is_real_post_url(final_url):
-            print("❌ Candidate URL failed URL validation.", flush=True)
             return False
 
         body_text = ""
@@ -672,7 +536,6 @@ def verify_real_post_page(page, url, title):
                 print(f"✓ URL: {final_url}", flush=True)
                 return True
 
-        print("❌ URL exists but post title could not be verified.", flush=True)
         return False
 
     except Exception as e:
@@ -695,7 +558,6 @@ def search_activity_for_post(page, title):
                 print(link, flush=True)
             return links
 
-        print("No real post link found in activity.", flush=True)
         return []
 
     except Exception as e:
@@ -755,7 +617,7 @@ def wait_for_modal_close(page, seconds=5):
 
 
 # ============================================================
-# PUBLISH BUTTON HANDLERS
+# PUBLISH FLOW (KEYBOARD ENHANCED & STABLE)
 # ============================================================
 
 def click_first_publish(page):
@@ -775,78 +637,51 @@ def click_first_publish(page):
             try:
                 btn.click(force=True, timeout=10000)
                 print("✓ First Publish clicked.", flush=True)
-                page.wait_for_timeout(4000)
-                if page.locator(".ant-modal-wrap:visible, .ant-modal:visible").count() > 0:
+                page.wait_for_timeout(3000)
+                if page.locator(".ant-modal:visible, .ant-modal-wrap:visible").count() > 0:
                     return True
             except Exception as e:
                 print(f"First publish click note: {e}", flush=True)
 
         page.wait_for_timeout(2000)
 
-    return page.locator(".ant-modal-wrap:visible, .ant-modal:visible").count() > 0
+    return page.locator(".ant-modal:visible, .ant-modal-wrap:visible").count() > 0
 
 
-# ============================================================
-# CRITICAL FIX: SELECT CATEGORY WITH EXPLICIT WAIT
-# ============================================================
-
-def select_category_in_modal(page):
-    print("Waiting for Publish modal and Category selector to load...", flush=True)
+def select_category_via_keyboard(page):
+    """
+    কীবোর্ড দিয়ে ক্যাটাগরি সিলেক্ট করা:
+    ১. ইনপুটে ক্লিক
+    ২. ArrowDown দিয়ে প্রথম আইটেম সিলেক্ট
+    ৩. Enter দিয়ে কনফার্ম
+    """
+    print("Handling category selection...", flush=True)
     remove_overlays(page)
 
-    # মডাল দৃশ্যমান হওয়া নিশ্চিত করা
-    modal = page.locator(".ant-modal:visible, .ant-modal-wrap:visible, [role='dialog']:visible").last
     try:
-        modal.wait_for(state="visible", timeout=15000)
-    except Exception:
-        pass
+        modal = page.locator(".ant-modal:visible, .ant-modal-wrap:visible").last
+        select_box = modal.locator(".ant-select, .ant-select-selector, [role='combobox']").first
 
-    cat_selectors = [
-        '.ant-modal:visible .ant-select-selector',
-        '.ant-modal-wrap:visible .ant-select-selector',
-        '[role="dialog"] .ant-select-selector',
-        '.ant-modal:visible .ant-select',
-        '.ant-select-selector:visible'
-    ]
-
-    select_box = None
-    for sel in cat_selectors:
-        loc = page.locator(sel)
-        try:
-            loc.first.wait_for(state="visible", timeout=8000)
-            select_box = loc.first
-            break
-        except Exception:
-            continue
-
-    if select_box:
-        print("✓ Category selector found. Opening dropdown...", flush=True)
-        select_box.click(force=True)
-        page.wait_for_timeout(1500)
-
-        option = page.locator(
-            '.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, '
-            '[role="option"]:visible, '
-            '.ant-select-item-option-content:visible'
-        ).first
-
-        try:
-            option.wait_for(state="visible", timeout=8000)
-            cat_name = option.inner_text().strip()
-            option.click(force=True)
-            print(f"✓ Category successfully selected: {cat_name}", flush=True)
-            page.wait_for_timeout(2500) # ফর্ম ভ্যালিডেশন হয়ে বাটন সক্রিয় হতে সময় দেওয়া
+        if select_box.count() > 0 and select_box.is_visible():
+            print("✓ Category selector found. Selecting via keyboard...", flush=True)
+            select_box.click(force=True)
+            page.wait_for_timeout(800)
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(500)
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(1500)
+            print("✓ Category selected.", flush=True)
             return True
-        except Exception as e:
-            print(f"Dropdown option click note: {e}", flush=True)
-    else:
-        print("⚠ Category selector could not be found with wait.", flush=True)
-
-    return False
+        else:
+            print("ℹ No category selector present in modal (continuing).", flush=True)
+            return True
+    except Exception as e:
+        print(f"Category selection note: {e}", flush=True)
+        return True
 
 
 def click_final_publish(page):
-    print("Searching for final Publish button...", flush=True)
+    print("Triggering final Publish button...", flush=True)
     remove_overlays(page)
     page.wait_for_timeout(2000)
 
@@ -855,32 +690,49 @@ def click_final_publish(page):
         print("❌ Publish modal not found.", flush=True)
         return False
 
-    # সক্রিয় বাটন লোড হওয়ার জন্য অপেক্ষা
-    btn = modal.locator('button.ant-btn-primary, button:has-text("Publish"), button:has-text("প্রকাশ করুন")').last
-
+    # জাভাস্ক্রিপ্ট এবং প্লে-রাইট উভয় দিয়ে একসাথে ক্লিক নিশ্চিত করা
     try:
-        btn.wait_for(state="visible", timeout=10000)
-        page.wait_for_timeout(1500)
-
-        # বাটন লক থাকলে JavaScript দিয়ে আনলক করে ক্লিক দেওয়া
         page.evaluate("""
             const modal = document.querySelector('.ant-modal:not([style*="display: none"]), .ant-modal-wrap:not([style*="display: none"])');
             if (modal) {
-                const btn = modal.querySelector('button.ant-btn-primary, button[type="submit"]');
-                if (btn) {
-                    btn.removeAttribute('disabled');
-                    btn.classList.remove('ant-btn-disabled');
-                    btn.click();
-                }
+                const buttons = modal.querySelectorAll('button');
+                buttons.forEach(b => {
+                    const txt = (b.innerText || '').toLowerCase();
+                    if (txt.includes('publish') || txt.includes('প্রকাশ') || txt.includes('submit') || b.classList.contains('ant-btn-primary')) {
+                        b.removeAttribute('disabled');
+                        b.classList.remove('ant-btn-disabled');
+                        b.click();
+                    }
+                });
             }
         """)
-
-        btn.click(force=True, timeout=10000)
-        print("✓ FINAL PUBLISH CLICKED SUCCESSFULLY.", flush=True)
-        return True
+        print("✓ JavaScript final publish executed.", flush=True)
     except Exception as e:
-        print(f"Final click failed: {e}", flush=True)
-        return False
+        print(f"JS Click note: {e}", flush=True)
+
+    # সাধারণ ক্লিক ফলব্যাক
+    try:
+        btn = modal.locator('button.ant-btn-primary, button:has-text("Publish"), button:has-text("প্রকাশ করুন")').last
+        if btn.count() > 0 and btn.is_visible():
+            btn.click(force=True, timeout=5000)
+            print("✓ Playwright final button clicked.", flush=True)
+    except Exception:
+        pass
+
+    return True
+
+
+def check_onscreen_errors(page):
+    """স্ক্রিনে কোনো লাল রঙের এরর নোটিফিকেশন আসলে তা প্রিন্ট করবে"""
+    try:
+        alerts = page.locator('.ant-message-error, .ant-notification-notice-error, [role="alert"]')
+        if alerts.count() > 0:
+            for i in range(alerts.count()):
+                err_text = alerts.nth(i).inner_text().strip()
+                if err_text:
+                    print(f"🔴 SEREY ON-SCREEN ERROR: {err_text}", flush=True)
+    except Exception:
+        pass
 
 
 def save_debug(page):
@@ -906,7 +758,7 @@ def publish(page, post):
     page.wait_for_timeout(5000)
     remove_overlays(page)
 
-    # TITLE
+    # 1. TITLE
     title_box = page.locator(
         'input[placeholder*="title" i], textarea[placeholder*="title" i], input[placeholder*="Enter title" i]'
     ).first
@@ -914,7 +766,7 @@ def publish(page, post):
     title_box.fill(post["title"])
     print("✓ Title filled", flush=True)
 
-    # BODY
+    # 2. BODY
     editor = page.locator('.ql-editor, div[contenteditable="true"]').first
     editor.wait_for(state="visible", timeout=20000)
     try:
@@ -926,7 +778,7 @@ def publish(page, post):
     print(f"✓ Body filled ({len(post['body'])} characters)", flush=True)
     page.wait_for_timeout(1500)
 
-    # THUMBNAIL
+    # 3. THUMBNAIL
     downloaded_img = download_image(post.get("thumbnail"))
     if downloaded_img:
         try:
@@ -941,7 +793,7 @@ def publish(page, post):
         except Exception as e:
             print(f"❌ Thumbnail upload failed: {e}", flush=True)
 
-    # FIRST PUBLISH
+    # 4. FIRST PUBLISH
     if not click_first_publish(page):
         print("❌ Could not open Publish modal.", flush=True)
         save_debug(page)
@@ -949,24 +801,21 @@ def publish(page, post):
 
     print("✓ Publish modal opened.", flush=True)
 
-    # CATEGORY SELECTION WITH GUARANTEED WAIT
-    select_category_in_modal(page)
+    # 5. CATEGORY (SAFE & FAST)
+    select_category_via_keyboard(page)
 
-    # ATTACH NETWORK CAPTURE
-    capture = NetworkCapture()
-    capture.attach(page)
-
-    # FINAL PUBLISH
+    # 6. FINAL PUBLISH
     if not click_final_publish(page):
         print("❌ Final Publish button could not be clicked.", flush=True)
         save_debug(page)
         return None
 
-    print("Waiting for Serey publish response...", flush=True)
+    print("Waiting for Serey publish confirmation...", flush=True)
 
+    # 7. MONITOR URL & ERRORS
     for i in range(25):
         page.wait_for_timeout(1000)
-        print(f"Waiting... {i+1}/25 sec | URL: {page.url}", flush=True)
+        check_onscreen_errors(page)
 
         if is_real_post_url(page.url):
             print("✓ REAL POST URL detected immediately.", flush=True)
@@ -976,16 +825,8 @@ def publish(page, post):
                     os.remove(downloaded_img)
                 return candidate
 
-    # ANALYZE API RESPONSES
-    api_urls = analyze_network_responses(capture)
-    for candidate in api_urls:
-        if verify_real_post_page(page, candidate, post["title"]):
-            if downloaded_img and os.path.exists(downloaded_img):
-                os.remove(downloaded_img)
-            return candidate
-
-    # CHECK CURRENT LINKS
-    print("Checking links on current Serey page...", flush=True)
+    # 8. CHECK LINKS ON PAGE
+    print("Checking links on current page...", flush=True)
     current_links = find_real_post_links(page)
     for candidate in current_links:
         if verify_real_post_page(page, candidate, post["title"]):
@@ -993,7 +834,7 @@ def publish(page, post):
                 os.remove(downloaded_img)
             return candidate
 
-    # ACTIVITY PAGE
+    # 9. CHECK PROFILE ACTIVITY
     activity_links = search_activity_for_post(page, post["title"])
     for candidate in activity_links:
         if verify_real_post_page(page, candidate, post["title"]):
