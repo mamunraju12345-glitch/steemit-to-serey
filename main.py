@@ -22,8 +22,6 @@ SEREY_LOGIN = os.environ.get(
 
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-# IMPORTANT:
-# This sync is for Bengali Serey.
 SEREY = "https://bengali.serey.io"
 NEW_POST = f"{SEREY}/blog/post/new"
 
@@ -43,13 +41,12 @@ STEEM_NODES = [
 
 
 # ============================================================
-# REMOVE COOKIE OVERLAYS (CRITICAL FIX)
+# REMOVE COOKIE OVERLAYS
 # ============================================================
 
 def remove_overlays(page):
     try:
         page.evaluate("""
-            // কুকি নোটিশ ও ক্লিক ব্লকিং ওভারলে পুরোপুরি রিমুভ করা
             const overlays = document.querySelectorAll('.no-cookie-notice-overlay, [class*="cookie-notice"], [class*="cookie-banner"]');
             overlays.forEach(el => el.remove());
         """)
@@ -71,28 +68,18 @@ def rpc(method, params):
 
     for node in STEEM_NODES:
         try:
-            r = requests.post(
-                node,
-                json=payload,
-                timeout=20
-            )
-
+            r = requests.post(node, json=payload, timeout=20)
             r.raise_for_status()
-
             data = r.json()
 
             if "error" in data:
                 raise Exception(data["error"])
 
             print(f"✓ RPC success: {node}", flush=True)
-
             return data["result"]
 
         except Exception as e:
-            print(
-                f"RPC {node} failed: {e}",
-                flush=True
-            )
+            print(f"RPC {node} failed: {e}", flush=True)
 
     raise Exception("All Steem RPC nodes failed")
 
@@ -106,11 +93,7 @@ def load_synced():
         return set()
 
     try:
-        with open(
-            SYNC_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
+        with open(SYNC_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         if isinstance(data, list):
@@ -119,32 +102,16 @@ def load_synced():
         return set()
 
     except Exception as e:
-        print(
-            f"⚠ Could not read {SYNC_FILE}: {e}",
-            flush=True
-        )
+        print(f"⚠ Could not read {SYNC_FILE}: {e}", flush=True)
         return set()
 
 
 def save_synced(data):
     temp_file = SYNC_FILE + ".tmp"
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(sorted(data), f, ensure_ascii=False, indent=2)
 
-    with open(
-        temp_file,
-        "w",
-        encoding="utf-8"
-    ) as f:
-        json.dump(
-            sorted(data),
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
-
-    os.replace(
-        temp_file,
-        SYNC_FILE
-    )
+    os.replace(temp_file, SYNC_FILE)
 
 
 # ============================================================
@@ -207,18 +174,9 @@ def extract_thumbnail_and_body(body, metadata):
     return body.strip(), thumbnail
 
 
-# ============================================================
-# STEEM DATE
-# ============================================================
-
 def parse_steem_date(date_str):
     try:
-        return datetime.strptime(
-            date_str,
-            "%Y-%m-%dT%H:%M:%S"
-        ).replace(
-            tzinfo=timezone.utc
-        )
+        return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
     except Exception:
         return None
 
@@ -228,17 +186,10 @@ def parse_steem_date(date_str):
 # ============================================================
 
 def get_posts():
-    print(
-        f"Collecting posts from @{STEEM_USERNAME} for the last {DAYS_LIMIT} days...",
-        flush=True
-    )
+    print(f"Collecting posts from @{STEEM_USERNAME} for the last {DAYS_LIMIT} days...", flush=True)
 
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=DAYS_LIMIT)
-
-    print(
-        f"Post cut-off date: {cutoff_date.strftime('%Y-%m-%d')}",
-        flush=True
-    )
+    print(f"Post cut-off date: {cutoff_date.strftime('%Y-%m-%d')}", flush=True)
 
     posts = []
     seen = set()
@@ -248,22 +199,17 @@ def get_posts():
     reached_old = False
 
     while len(posts) < 5000 and not reached_old:
-        params = {
-            "tag": STEEM_USERNAME,
-            "limit": 100
-        }
+        params = {"tag": STEEM_USERNAME, "limit": 100}
 
         if start_author:
             params["start_author"] = start_author
             params["start_permlink"] = start_permlink
 
         result = rpc("condenser_api.get_discussions_by_blog", params)
-
         if not result:
             break
 
         batch = result[1:] if start_author else result
-
         if not batch:
             break
 
@@ -273,12 +219,10 @@ def get_posts():
 
             author = p.get("author", "")
             permlink = p.get("permlink", "")
-
             if not permlink:
                 continue
 
             post_id = f"{author}/{permlink}"
-
             if post_id in seen:
                 continue
 
@@ -321,12 +265,7 @@ def get_posts():
         time.sleep(0.3)
 
     posts.reverse()
-
-    print(
-        f"Total posts collected from the last {DAYS_LIMIT} days: {len(posts)}",
-        flush=True
-    )
-
+    print(f"Total posts collected from the last {DAYS_LIMIT} days: {len(posts)}", flush=True)
     return posts
 
 
@@ -351,7 +290,6 @@ def download_image(url):
 
         content_type = r.headers.get("content-type", "").lower()
         ext = mimetypes.guess_extension(content_type.split(";")[0]) or ".jpg"
-
         if ext == ".jpe":
             ext = ".jpg"
 
@@ -360,11 +298,7 @@ def download_image(url):
         with open(file_path, "wb") as f:
             f.write(r.content)
 
-        print(
-            f"✓ Cover image saved: {file_path} ({len(r.content)} bytes)",
-            flush=True
-        )
-
+        print(f"✓ Cover image saved: {file_path} ({len(r.content)} bytes)", flush=True)
         return file_path
 
     except Exception as e:
@@ -378,7 +312,6 @@ def download_image(url):
 
 def login(page):
     print("Logging into Serey...", flush=True)
-
     max_attempts = 3
 
     for attempt in range(1, max_attempts + 1):
@@ -408,7 +341,7 @@ def login(page):
             )
 
             if login_buttons.count() == 0 or not login_buttons.first.is_visible():
-                print("Navigating directly to /blog/post/new...", flush=True)
+                print("Navigating to /blog/post/new...", flush=True)
                 page.goto(NEW_POST, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(5000)
                 remove_overlays(page)
@@ -534,17 +467,7 @@ def is_real_post_url(url):
         if username != expected_user:
             return False
 
-        bad_ids = {
-            "my-activity",
-            "activity",
-            "profile",
-            "posts",
-            "followers",
-            "following",
-            "write",
-            "new"
-        }
-
+        bad_ids = {"my-activity", "activity", "profile", "posts", "followers", "following", "write", "new"}
         if post_id in bad_ids:
             return False
 
@@ -598,10 +521,6 @@ class NetworkCapture:
         page.on("response", on_response)
 
 
-# ============================================================
-# EXTRACT URLS
-# ============================================================
-
 def extract_urls_from_text(text):
     found = []
     if not text:
@@ -648,10 +567,6 @@ def collect_urls_from_json(obj):
 
     return found
 
-
-# ============================================================
-# API RESPONSE ANALYSIS
-# ============================================================
 
 def analyze_network_responses(capture):
     print("\n" + "=" * 60, flush=True)
@@ -795,7 +710,7 @@ def search_activity_for_post(page, title):
 def close_crop_modal(page):
     try:
         remove_overlays(page)
-        modals = page.locator(".ant-modal-wrap:visible")
+        modals = page.locator(".ant-modal-wrap:visible, .ant-modal:visible")
         count = modals.count()
         if count == 0:
             return
@@ -851,7 +766,6 @@ def click_first_publish(page):
         close_crop_modal(page)
         page.wait_for_timeout(1000)
 
-        # ইংরেজি এবং বাংলা সব বাটন টার্গেট করা
         btn = page.locator(
             'button:has-text("Publish"), button:has-text("প্রকাশ করুন"), '
             'button:has-text("পোস্ট করুন"), .ant-btn-primary:has-text("Publish")'
@@ -861,79 +775,112 @@ def click_first_publish(page):
             try:
                 btn.click(force=True, timeout=10000)
                 print("✓ First Publish clicked.", flush=True)
-                page.wait_for_timeout(3000)
-                if page.locator(".ant-modal-wrap:visible").count() > 0:
+                page.wait_for_timeout(4000)
+                if page.locator(".ant-modal-wrap:visible, .ant-modal:visible").count() > 0:
                     return True
             except Exception as e:
                 print(f"First publish click note: {e}", flush=True)
 
         page.wait_for_timeout(2000)
 
-    return page.locator(".ant-modal-wrap:visible").count() > 0
+    return page.locator(".ant-modal-wrap:visible, .ant-modal:visible").count() > 0
 
+
+# ============================================================
+# CRITICAL FIX: SELECT CATEGORY WITH EXPLICIT WAIT
+# ============================================================
 
 def select_category_in_modal(page):
-    print("Selecting category in publish modal...", flush=True)
+    print("Waiting for Publish modal and Category selector to load...", flush=True)
     remove_overlays(page)
 
+    # মডাল দৃশ্যমান হওয়া নিশ্চিত করা
+    modal = page.locator(".ant-modal:visible, .ant-modal-wrap:visible, [role='dialog']:visible").last
     try:
-        modal = page.locator(".ant-modal-wrap:visible").last
-        select_box = modal.locator(".ant-select-selector, [role='combobox']").first
+        modal.wait_for(state="visible", timeout=15000)
+    except Exception:
+        pass
 
-        if select_box.count() > 0 and select_box.is_visible():
-            select_box.click(force=True)
-            page.wait_for_timeout(1500)
+    cat_selectors = [
+        '.ant-modal:visible .ant-select-selector',
+        '.ant-modal-wrap:visible .ant-select-selector',
+        '[role="dialog"] .ant-select-selector',
+        '.ant-modal:visible .ant-select',
+        '.ant-select-selector:visible'
+    ]
 
-            # ড্রপডাউন অপশন থেকে প্রথম অপশন সিলেক্ট করা
-            option = page.locator(
-                '.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option'
-            ).first
+    select_box = None
+    for sel in cat_selectors:
+        loc = page.locator(sel)
+        try:
+            loc.first.wait_for(state="visible", timeout=8000)
+            select_box = loc.first
+            break
+        except Exception:
+            continue
 
-            if option.count() > 0 and option.is_visible():
-                cat_text = option.inner_text().strip()
-                option.click(force=True)
-                print(f"✓ Category selected: {cat_text}", flush=True)
-                page.wait_for_timeout(1500)
-                return True
+    if select_box:
+        print("✓ Category selector found. Opening dropdown...", flush=True)
+        select_box.click(force=True)
+        page.wait_for_timeout(1500)
 
-        print("⚠ Category selector not found or already filled.", flush=True)
-        return False
-    except Exception as e:
-        print(f"Category selection note: {e}", flush=True)
-        return False
+        option = page.locator(
+            '.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option, '
+            '[role="option"]:visible, '
+            '.ant-select-item-option-content:visible'
+        ).first
+
+        try:
+            option.wait_for(state="visible", timeout=8000)
+            cat_name = option.inner_text().strip()
+            option.click(force=True)
+            print(f"✓ Category successfully selected: {cat_name}", flush=True)
+            page.wait_for_timeout(2500) # ফর্ম ভ্যালিডেশন হয়ে বাটন সক্রিয় হতে সময় দেওয়া
+            return True
+        except Exception as e:
+            print(f"Dropdown option click note: {e}", flush=True)
+    else:
+        print("⚠ Category selector could not be found with wait.", flush=True)
+
+    return False
 
 
 def click_final_publish(page):
     print("Searching for final Publish button...", flush=True)
     remove_overlays(page)
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(2000)
 
-    modal = page.locator(".ant-modal-wrap:visible").last
+    modal = page.locator(".ant-modal:visible, .ant-modal-wrap:visible").last
     if modal.count() == 0:
         print("❌ Publish modal not found.", flush=True)
         return False
 
-    # বাংলা এবং ইংরেজি বাটনের নাম
-    candidates = modal.locator(
-        'button:has-text("Publish"), button:has-text("প্রকাশ করুন"), '
-        'button:has-text("Submit"), button:has-text("Confirm"), '
-        'button:has-text("নিশ্চিত"), button.ant-btn-primary'
-    )
+    # সক্রিয় বাটন লোড হওয়ার জন্য অপেক্ষা
+    btn = modal.locator('button.ant-btn-primary, button:has-text("Publish"), button:has-text("প্রকাশ করুন")').last
 
-    count = candidates.count()
-    print(f"Final modal action buttons detected: {count}", flush=True)
+    try:
+        btn.wait_for(state="visible", timeout=10000)
+        page.wait_for_timeout(1500)
 
-    if count > 0:
-        btn = candidates.last
-        try:
-            remove_overlays(page)
-            btn.click(force=True, timeout=10000)
-            print("✓ FINAL PUBLISH CLICKED SUCCESSFULLY.", flush=True)
-            return True
-        except Exception as e:
-            print(f"Final click failed: {e}", flush=True)
+        # বাটন লক থাকলে JavaScript দিয়ে আনলক করে ক্লিক দেওয়া
+        page.evaluate("""
+            const modal = document.querySelector('.ant-modal:not([style*="display: none"]), .ant-modal-wrap:not([style*="display: none"])');
+            if (modal) {
+                const btn = modal.querySelector('button.ant-btn-primary, button[type="submit"]');
+                if (btn) {
+                    btn.removeAttribute('disabled');
+                    btn.classList.remove('ant-btn-disabled');
+                    btn.click();
+                }
+            }
+        """)
 
-    return False
+        btn.click(force=True, timeout=10000)
+        print("✓ FINAL PUBLISH CLICKED SUCCESSFULLY.", flush=True)
+        return True
+    except Exception as e:
+        print(f"Final click failed: {e}", flush=True)
+        return False
 
 
 def save_debug(page):
@@ -1002,10 +949,10 @@ def publish(page, post):
 
     print("✓ Publish modal opened.", flush=True)
 
-    # CATEGORY SELECTION (MUST DO)
+    # CATEGORY SELECTION WITH GUARANTEED WAIT
     select_category_in_modal(page)
 
-    # NETWORK CAPTURE
+    # ATTACH NETWORK CAPTURE
     capture = NetworkCapture()
     capture.attach(page)
 
