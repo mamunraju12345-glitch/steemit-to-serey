@@ -284,6 +284,8 @@ def extract_thumbnail_and_body(body, metadata):
     )
 
     # Convert Markdown links to plain text
+    # [Example](https://example.com)
+    # becomes Example
     body = re.sub(
         r'\[([^\]]+)\]\((https?://[^)]+)\)',
         r'\1',
@@ -605,7 +607,7 @@ def download_image(url):
 
 
 # ============================================================
-# LOGIN (FIXED & ROBUST)
+# LOGIN
 # ============================================================
 
 def login(page):
@@ -621,105 +623,87 @@ def login(page):
         timeout=60000
     )
 
-    page.wait_for_timeout(4000)
+    page.wait_for_timeout(5000)
 
     print(
-        f"Initial URL: {page.url}",
+        f"After login URL: {page.url}",
         flush=True
     )
 
-    # 1. চেক করা ইউজার ইতোমধ্যে লগইন আছে কি না
-    logged_in_indicators = page.locator(
-        f'a[href*="{SEREY_LOGIN}"], '
-        'button:has-text("Log out"), '
-        'a:has-text("Log out"), '
-        'button:has-text("Logout"), '
-        '.ant-avatar'
-    )
-
-    if logged_in_indicators.count() > 0 and logged_in_indicators.first.is_visible():
-        print(
-            "✓ Already logged into Serey! Skipping login step.",
-            flush=True
-        )
-        return
-
-    # 2. লগইন বাটন খোঁজা ও ক্লিক করা
-    login_btn = page.locator(
+    login_buttons = page.locator(
         'a:has-text("Log in"), '
         'button:has-text("Log in"), '
         'a:has-text("Log In"), '
-        'button:has-text("Log In"), '
-        'a:has-text("লগইন"), '
-        'button:has-text("লগইন")'
-    ).first
+        'button:has-text("Log In")'
+    )
 
-    if login_btn.count() > 0 and login_btn.is_visible():
+    if (
+        login_buttons.count() > 0
+        and login_buttons.first.is_visible()
+    ):
+
         try:
-            print("Clicking login button...", flush=True)
-            login_btn.click()
-            page.wait_for_timeout(2000)
-        except Exception:
-            login_btn.click(force=True)
-            page.wait_for_timeout(2000)
-    else:
-        print("Login button not found, navigating directly to /login...", flush=True)
-        try:
-            page.goto(f"{SEREY}/login", wait_until="domcontentloaded", timeout=30000)
+
+            login_buttons.first.click(
+                force=True,
+                timeout=15000
+            )
+
             page.wait_for_timeout(3000)
-        except Exception:
-            pass
 
-    # 3. ইনপুট বক্স সিলেক্টর
-    user_in = page.locator(
-        'input[name="username"], '
-        'input[placeholder*="Username" i], '
-        'input[placeholder*="ইউজারনেম" i], '
-        '.ant-modal input[type="text"], '
-        'input[type="text"]'
-    ).first
+        except Exception as e:
 
-    pass_in = page.locator(
-        'input[name="password"], '
-        'input[placeholder*="Password" i], '
-        'input[placeholder*="Private Key" i], '
-        '.ant-modal input[type="password"], '
-        'input[type="password"]'
-    ).first
+            print(
+                f"Login button click note: {e}",
+                flush=True
+            )
 
-    try:
+        user_in = page.locator(
+            'input[placeholder*="Username" i], '
+            'input[type="text"]'
+        ).first
+
+        pass_in = page.locator(
+            'input[placeholder*="Private Key" i], '
+            'input[placeholder*="Password" i], '
+            'input[type="password"]'
+        ).first
+
         user_in.wait_for(
             state="visible",
-            timeout=15000
+            timeout=20000
         )
+
         pass_in.wait_for(
             state="visible",
-            timeout=15000
+            timeout=20000
         )
-    except Exception as e:
-        print(f"❌ Login input not found: {e}", flush=True)
-        page.screenshot(path="login_error.png")
-        print("Saved debug screenshot: login_error.png", flush=True)
-        save_debug(page)
-        raise e
 
-    # 4. ইউজার ও পাসওয়ার্ড ইনপুট দেওয়া
-    user_in.fill(SEREY_LOGIN)
-    page.wait_for_timeout(500)
-    pass_in.fill(SEREY_PASSWORD)
-    page.wait_for_timeout(500)
+        user_in.fill(
+            SEREY_LOGIN
+        )
 
-    # 5. সাবমিট করা
-    submit_btn = page.locator(
-        '.ant-modal button:has-text("Log in"), '
-        '.ant-modal button:has-text("Log In"), '
-        'button[type="submit"], '
-        'button:has-text("Log in"), '
-        'button:has-text("Log In")'
-    ).last
+        pass_in.fill(
+            SEREY_PASSWORD
+        )
 
-    submit_btn.click(force=True, timeout=15000)
-    page.wait_for_timeout(5000)
+        page.locator(
+            'button:has-text("Log in"), '
+            'button:has-text("Log In")'
+        ).last.click(
+            force=True,
+            timeout=20000
+        )
+
+        page.wait_for_timeout(7000)
+
+    else:
+
+        print(
+            "✓ Login fields not visible; "
+            "checking whether already logged in.",
+            flush=True
+        )
 
     print(
         f"After login URL: {page.url}",
@@ -1951,14 +1935,7 @@ def publish(page, post):
     page.wait_for_timeout(
         5000
     )
-# কুকি নোটিশ / ওভারলে রিমুভ করার কোড (যদি থাকে)
-    try:
-        page.evaluate("""() => {
-            const overlay = document.querySelector('.no-cookie-notice-overlay');
-            if (overlay) overlay.remove();
-        }""")
-    except Exception:
-        pass
+
     # --------------------------------------------------------
     # TITLE
     # --------------------------------------------------------
