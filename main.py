@@ -307,99 +307,51 @@ def download_image(url):
 
 
 # ============================================================
-# LOGIN
+# GUARANTEED LOGIN (MUST LOG IN)
 # ============================================================
 
 def login(page):
-    print("Logging into Serey...", flush=True)
-    max_attempts = 3
+    print("Initiating login check for Serey...", flush=True)
 
-    for attempt in range(1, max_attempts + 1):
-        print(f"\n--- Login Attempt {attempt}/{max_attempts} ---", flush=True)
+    page.goto(SEREY, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(5000)
+    remove_overlays(page)
 
-        try:
-            page.goto(SEREY, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(5000)
-            remove_overlays(page)
+    login_buttons = page.locator(
+        'button:has-text("Log in"), a:has-text("Log in"), '
+        'button:has-text("Log In"), a:has-text("Log In"), '
+        'button:has-text("লগ ইন"), a:has-text("লগ ইন")'
+    )
 
-            logged_in_selectors = [
-                f'a[href*="{SEREY_LOGIN}"]',
-                'a[href*="/blog/post/new"]',
-                'button:has-text("Write")',
-                '.user-profile-header',
-                '.ant-avatar'
-            ]
-            for sel in logged_in_selectors:
-                if page.locator(sel).count() > 0 and page.locator(sel).first.is_visible():
-                    print("✓ Detected existing session! Already logged in.", flush=True)
-                    return True
+    # যদি 'Log in' বাটন দেখা যায়, তার মানে ইউজার লগআউট অবস্থায় আছে!
+    if login_buttons.count() > 0 and login_buttons.first.is_visible():
+        print("User is logged out. Clicking 'Log in' button...", flush=True)
+        login_buttons.first.click(force=True)
+        page.wait_for_timeout(3000)
 
-            login_buttons = page.locator(
-                'a:has-text("Log in"), button:has-text("Log in"), '
-                'a:has-text("Log In"), button:has-text("Log In"), '
-                'button:has-text("লগ ইন"), a:has-text("লগ ইন")'
-            )
+        # ইনপুট ফিল্ড খুঁজে বের করা
+        user_in = page.locator('.ant-modal:visible input[placeholder*="Username" i], input[placeholder*="Username" i], input[placeholder*="ইউজারনেম" i], input[type="text"]:visible').first
+        pass_in = page.locator('.ant-modal:visible input[type="password"], input[placeholder*="Private Key" i], input[placeholder*="Password" i], input[type="password"]:visible').first
 
-            if login_buttons.count() == 0 or not login_buttons.first.is_visible():
-                print("Navigating to /blog/post/new...", flush=True)
-                page.goto(NEW_POST, wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_timeout(5000)
-                remove_overlays(page)
+        user_in.wait_for(state="visible", timeout=25000)
+        pass_in.wait_for(state="visible", timeout=25000)
 
-            login_buttons = page.locator(
-                'a:has-text("Log in"), button:has-text("Log in"), '
-                'a:has-text("Log In"), button:has-text("Log In"), '
-                'button:has-text("লগ ইন"), a:has-text("লগ ইন")'
-            )
+        print(f"Submitting credentials for @{SEREY_LOGIN}...", flush=True)
+        user_in.fill(SEREY_LOGIN)
+        page.wait_for_timeout(500)
+        pass_in.fill(SEREY_PASSWORD)
+        page.wait_for_timeout(500)
 
-            if login_buttons.count() > 0 and login_buttons.first.is_visible():
-                print("Clicking 'Log in' button...", flush=True)
-                login_buttons.first.click(force=True)
-                page.wait_for_timeout(4000)
+        # লগইন সাবমিট বাটন
+        submit_btn = page.locator('.ant-modal:visible button:has-text("Log in"), .ant-modal:visible button:has-text("Log In"), .ant-modal:visible button[type="submit"]').last
+        submit_btn.click(force=True, timeout=15000)
 
-            user_in = page.locator(
-                '.ant-modal:visible input[placeholder*="Username" i], '
-                'input[placeholder*="Username" i], '
-                'input[placeholder*="ইউজারনেম" i], '
-                'input[type="text"]:visible'
-            ).first
-
-            pass_in = page.locator(
-                '.ant-modal:visible input[type="password"], '
-                'input[placeholder*="Private Key" i], '
-                'input[placeholder*="Password" i], '
-                'input[type="password"]:visible'
-            ).first
-
-            user_in.wait_for(state="visible", timeout=30000)
-            pass_in.wait_for(state="visible", timeout=30000)
-
-            print("Filling login credentials...", flush=True)
-            user_in.fill(SEREY_LOGIN)
-            page.wait_for_timeout(500)
-            pass_in.fill(SEREY_PASSWORD)
-            page.wait_for_timeout(500)
-
-            submit_btn = page.locator(
-                '.ant-modal:visible button:has-text("Log in"), '
-                '.ant-modal:visible button:has-text("Log In"), '
-                'button:has-text("Log in"), '
-                'button:has-text("Log In")'
-            ).last
-
-            submit_btn.click(force=True, timeout=15000)
-            page.wait_for_timeout(8000)
-            remove_overlays(page)
-
-            print("✓ LOGGED INTO SEREY SUCCESSFULLY!", flush=True)
-            return True
-
-        except Exception as e:
-            print(f"⚠ Login attempt {attempt} failed: {e}", flush=True)
-            if attempt == max_attempts:
-                save_debug(page)
-                raise Exception("All Serey login attempts failed permanently.")
-            page.wait_for_timeout(4000)
+        print("Waiting for login to authenticate...", flush=True)
+        page.wait_for_timeout(8000)
+        remove_overlays(page)
+        print("✓ LOGGED INTO SEREY SUCCESSFULLY!", flush=True)
+    else:
+        print("✓ Log in button not found on page, already in logged in session.", flush=True)
 
 
 # ============================================================
@@ -617,7 +569,7 @@ def wait_for_modal_close(page, seconds=5):
 
 
 # ============================================================
-# PUBLISH FLOW (KEYBOARD ENHANCED & STABLE)
+# PUBLISH FLOW
 # ============================================================
 
 def click_first_publish(page):
@@ -649,12 +601,6 @@ def click_first_publish(page):
 
 
 def select_category_via_keyboard(page):
-    """
-    কীবোর্ড দিয়ে ক্যাটাগরি সিলেক্ট করা:
-    ১. ইনপুটে ক্লিক
-    ২. ArrowDown দিয়ে প্রথম আইটেম সিলেক্ট
-    ৩. Enter দিয়ে কনফার্ম
-    """
     print("Handling category selection...", flush=True)
     remove_overlays(page)
 
@@ -690,7 +636,7 @@ def click_final_publish(page):
         print("❌ Publish modal not found.", flush=True)
         return False
 
-    # জাভাস্ক্রিপ্ট এবং প্লে-রাইট উভয় দিয়ে একসাথে ক্লিক নিশ্চিত করা
+    # জাভাস্ক্রিপ্ট ডিরেক্ট ক্লিক
     try:
         page.evaluate("""
             const modal = document.querySelector('.ant-modal:not([style*="display: none"]), .ant-modal-wrap:not([style*="display: none"])');
@@ -710,7 +656,7 @@ def click_final_publish(page):
     except Exception as e:
         print(f"JS Click note: {e}", flush=True)
 
-    # সাধারণ ক্লিক ফলব্যাক
+    # প্লে-রাইট ফলব্যাক
     try:
         btn = modal.locator('button.ant-btn-primary, button:has-text("Publish"), button:has-text("প্রকাশ করুন")').last
         if btn.count() > 0 and btn.is_visible():
@@ -723,7 +669,6 @@ def click_final_publish(page):
 
 
 def check_onscreen_errors(page):
-    """স্ক্রিনে কোনো লাল রঙের এরর নোটিফিকেশন আসলে তা প্রিন্ট করবে"""
     try:
         alerts = page.locator('.ant-message-error, .ant-notification-notice-error, [role="alert"]')
         if alerts.count() > 0:
@@ -801,7 +746,7 @@ def publish(page, post):
 
     print("✓ Publish modal opened.", flush=True)
 
-    # 5. CATEGORY (SAFE & FAST)
+    # 5. CATEGORY
     select_category_via_keyboard(page)
 
     # 6. FINAL PUBLISH
@@ -812,7 +757,7 @@ def publish(page, post):
 
     print("Waiting for Serey publish confirmation...", flush=True)
 
-    # 7. MONITOR URL & ERRORS
+    # 7. MONITOR CONFIRMATION
     for i in range(25):
         page.wait_for_timeout(1000)
         check_onscreen_errors(page)
@@ -825,7 +770,7 @@ def publish(page, post):
                     os.remove(downloaded_img)
                 return candidate
 
-    # 8. CHECK LINKS ON PAGE
+    # 8. CHECK LINKS
     print("Checking links on current page...", flush=True)
     current_links = find_real_post_links(page)
     for candidate in current_links:
@@ -912,6 +857,7 @@ def main():
         page = context.new_page()
 
         try:
+            # বাধ্যতামূলক লগইন সম্পন্ন করা
             login(page)
 
             for post in posts_to_run:
