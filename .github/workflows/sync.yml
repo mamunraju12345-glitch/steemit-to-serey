@@ -1,4 +1,4 @@
-name: Steemit to Serey Auto Sync
+name: Steemit to Serey Auto Sync & Vote
 
 on:
   schedule:
@@ -28,13 +28,9 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests playwright
+          pip install requests
 
-      - name: Install Chromium
-        run: |
-          python -m playwright install --with-deps chromium
-
-      - name: Run Serey Sync
+      - name: Run Serey Sync (Posting)
         env:
           STEEM_USERNAME: ${{ secrets.STEEM_USERNAME }}
           SEREY_LOGIN: ${{ secrets.SEREY_LOGIN }}
@@ -42,16 +38,20 @@ jobs:
         run: |
           python main.py
 
-      - name: Save Synced Posts
+      - name: Run Serey Auto Vote (10 Upvotes)
+        run: |
+          python auto_vote.py
+
+      - name: Save Synced & Voted Records
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add synced_posts.json
+          git add synced_posts.json voted_posts.json
 
           if git diff --cached --quiet; then
-            echo "No new posts to update."
+            echo "No changes to commit."
           else
-            git commit -m "Auto-update synced posts [skip ci]"
+            git commit -m "Auto-update synced & voted records [skip ci]"
             git push
           fi
