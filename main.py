@@ -6,14 +6,14 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 # ============================================================
-# SETTINGS & HARDCODED PERMANENT TOKEN
+# SETTINGS & BRAND NEW FRESH TOKEN FOR MAMUN
 # ============================================================
 
 STEEM_USERNAME = os.environ.get("STEEM_USERNAME", "").strip()
 SEREY_LOGIN = os.environ.get("SEREY_LOGIN", os.environ.get("SEREY_USERNAME", "mamun")).replace("@", "").strip()
 
-# আপনার আসল পার্মানেন্ট টোকেনটি সরাসরি বসিয়ে দেওয়া হলো (কখনো এক্সপায়ার হবে না)
-FALLBACK_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoicG9zdGluZyIsInVzZXJuYW1lIjoibWFtdW4iLCJwYXNzd29yZCI6IjVLNDhVSEF1a3JuTkNHUGVxeTczUkRNTlRBbm1HRm1RY2I4MzRrZUxNSndCQnpkWWJLQyIsImlhdCI6MTc5MDQyNjEzNX0.-yy0luAAG9_uPYFmHRsyh7nR9Wbj2BXJ91KRxUnzQgk"
+# মামুন অ্যাকাউন্টের একদম নতুন ফ্রেশ টোকেন (এখনই জেনারেট হওয়া)
+FALLBACK_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoicG9zdGluZyIsInVzZXJuYW1lIjoibWFtdW4iLCJwYXNzd29yZCI6IjVLNDhVSEF1a3JuTkNHUGVxeTczUkRNTlRBbm1HRm1RY2I4MzRrZUxNSndCQnpkWWJLQyIsImlhdCI6MTc5MDQyOTg0OH0.v5tdje9uHEQ6ckavhtAgQxQHEaPIqji1H09Jvk2uiTk"
 SEREY_TOKEN = os.environ.get("SEREY_TOKEN", FALLBACK_TOKEN).strip()
 
 SEREY_API_POST = "https://bengali.serey.io/api/posts"
@@ -89,7 +89,6 @@ def format_body_and_thumbnail(body, metadata):
         m = re.search(r'<img[^>]+src=["\'](https?://[^"\'>\s]+)', body, re.I)
         if m: thumbnail = m.group(1)
 
-    # Clean body
     clean = re.sub(r'!\[[^\]]*\]\(\s*https?://[^)\s]+\s*\)', '', body, flags=re.I)
     clean = re.sub(r'<img\b[^>]*>', '', clean, flags=re.I)
     clean = re.sub(r'<[^>]+>', '', clean)
@@ -153,13 +152,15 @@ def get_posts():
 def publish_post_api(token, post):
     print(f"Submitting via REST API: {post['title']}", flush=True)
 
+    # হেডার এবং কুকি একসাথে পাঠানো হচ্ছে যাতে সার্ভার ১০০% অথোরাইজ করে
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:156.0) Gecko/20100101 Firefox/156.0",
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json; charset=UTF-8",
         "authorization": f"Bearer {token}",
         "Origin": "https://bengali.serey.io",
-        "Referer": "https://bengali.serey.io/write/new"
+        "Referer": "https://bengali.serey.io/write/new",
+        "Cookie": f'serey_no_cookie_notice_seen=1; serey_new_jwt_auth_token={{"token":"{token}","username":"{SEREY_LOGIN}"}}'
     }
 
     payload = {
@@ -218,7 +219,7 @@ def main():
         return
 
     token = SEREY_TOKEN
-    print("✓ Token loaded successfully.", flush=True)
+    print("✓ New fresh token loaded successfully.", flush=True)
 
     synced = load_synced()
     posts = get_posts()
