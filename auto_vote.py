@@ -40,35 +40,49 @@ def save_voted(data):
         json.dump(sorted(data), f, ensure_ascii=False, indent=2)
 
 # ============================================================
-# FETCH POSTS
+# FETCH POSTS (WITH DETAILED DEBUG)
 # ============================================================
 
 def get_posts_to_vote():
     print("Fetching recent posts from Bengali Community...", flush=True)
+
     urls = [
-        "https://global-api.serey.io/api/v2/post/list-by-trending?limit=25&offset=0&community_id=2",
-        "https://global-api.serey.io/api/v2/post/list-by-created?limit=25&offset=0&community_id=2",
-        "https://bengali.serey.io/api/posts?community_id=2"
+        "https://global-api.serey.io/api/v2/post/list-by-trending?limit=20&offset=0&community_id=2",
+        "https://global-api.serey.io/api/v2/posts/list-by-trending?limit=20&offset=0&community_id=2",
+        "https://global-api.serey.io/api/v2/post/list-by-created?limit=20&offset=0&community_id=2",
+        "https://bengali.serey.io/api/posts?limit=20&community_id=2"
     ]
+
     for url in urls:
         try:
             r = requests.get(url, timeout=15)
+            print(f"Checking URL: {url} -> Status: {r.status_code}", flush=True)
             if r.status_code == 200:
                 data = r.json()
-                # বিভিন্ন কী (keys) চেক করা
+                print(f"API Data Keys: {list(data.keys()) if isinstance(data, dict) else 'List response'}", flush=True)
+
                 posts = None
                 if isinstance(data, dict):
-                    posts = data.get("posts") or data.get("data") or data.get("result") or data.get("blogs")
-                    if isinstance(posts, dict):
-                        posts = posts.get("posts") or posts.get("data")
+                    # সব সম্ভাব্য কী (key) থেকে পোস্ট খোঁজা
+                    for k in ["posts", "data", "result", "blogs", "articles", "items"]:
+                        if k in data and isinstance(data[k], list) and len(data[k]) > 0:
+                            posts = data[k]
+                            break
+                    # নেস্টেড ডাটা চেক
+                    if not posts and "data" in data and isinstance(data["data"], dict):
+                        for k in ["posts", "data", "result"]:
+                            if k in data["data"] and isinstance(data["data"][k], list):
+                                posts = data["data"][k]
+                                break
                 elif isinstance(data, list):
                     posts = data
 
                 if posts and isinstance(posts, list) and len(posts) > 0:
-                    print(f"✓ Found {len(posts)} posts from API.", flush=True)
+                    print(f"✓ Found {len(posts)} posts to vote!", flush=True)
                     return posts
         except Exception as e:
-            print(f"Fetch note ({url}): {e}", flush=True)
+            print(f"Fetch error ({url}): {e}", flush=True)
+
     return []
 
 # ============================================================
@@ -95,10 +109,10 @@ def cast_vote(author, permlink):
     try:
         r = requests.post(VOTE_API, json=payload, headers=headers, timeout=20)
         if r.status_code in [200, 201]:
-            print(f"  ✓ Upvoted: @{author}/{permlink}", flush=True)
+            print(f"  ✓ Upvoted: @{author}/{permlink} (Weight: {VOTE_WEIGHT}%)", flush=True)
             return True
         else:
-            print(f"  ❌ Vote response ({r.status_code}): {r.text[:100]}", flush=True)
+            print(f"  ❌ Vote response ({r.status_code}): {r.text[:150]}", flush=True)
             return False
     except Exception as e:
         print(f"  ❌ Error voting: {e}", flush=True)
@@ -126,11 +140,11 @@ def main():
 
     for p in posts:
         if votes_given >= MAX_VOTES_PER_RUN:
-            print(f"\n✓ Reached limit of {MAX_VOTES_PER_RUN} votes.", flush=True)
+            print(f"\n✓ Reached limit of {MAX_VOTES_PER_RUN} votes for this run.", flush=True)
             break
 
-        author = p.get("author") or p.get("author_username")
-        permlink = p.get("permlink")
+        author = p.get("author") or p.get("author_username") or p.get("author_name")
+        permlink = p.get("permlink") or p.get("slug")
 
         if not author or not permlink:
             continue
@@ -154,7 +168,7 @@ def main():
             time.sleep(2)
 
     print("\n" + "=" * 60)
-    print(f"AUTO VOTE FINISHED. New votes: {votes_given}")
+    print(f"AUTO VOTE COMPLETED. Total new votes given: {votes_given}")
     print("=" * 60)
 
 if __name__ == "__main__":
