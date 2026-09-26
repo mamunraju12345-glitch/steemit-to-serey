@@ -6,18 +6,17 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 # ============================================================
-# SETTINGS & SECRETS
+# SETTINGS & HARDCODED PERMANENT TOKEN
 # ============================================================
 
 STEEM_USERNAME = os.environ.get("STEEM_USERNAME", "").strip()
 SEREY_LOGIN = os.environ.get("SEREY_LOGIN", os.environ.get("SEREY_USERNAME", "mamun")).replace("@", "").strip()
-SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-# GitHub Secret থেকে টোকেন নেওয়া
-SEREY_TOKEN = os.environ.get("SEREY_TOKEN", "").strip()
+# আপনার আসল পার্মানেন্ট টোকেনটি সরাসরি বসিয়ে দেওয়া হলো (কখনো এক্সপায়ার হবে না)
+FALLBACK_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoicG9zdGluZyIsInVzZXJuYW1lIjoibWFtdW4iLCJwYXNzd29yZCI6IjVLNDhVSEF1a3JuTkNHUGVxeTczUkRNTlRBbm1HRm1RY2I4MzRrZUxNSndCQnpkWWJLQyIsImlhdCI6MTc5MDQyNjEzNX0.-yy0luAAG9_uPYFmHRsyh7nR9Wbj2BXJ91KRxUnzQgk"
+SEREY_TOKEN = os.environ.get("SEREY_TOKEN", FALLBACK_TOKEN).strip()
 
 SEREY_API_POST = "https://bengali.serey.io/api/posts"
-SEREY_AUTH_API = "https://bengali.serey.io/api/accounts/authenticate"
 SUMMARIZE_API = "https://global-api.serey.io/api/v2/serey-web/summarize-post"
 
 SYNC_FILE = "synced_posts.json"
@@ -98,7 +97,6 @@ def format_body_and_thumbnail(body, metadata):
     clean = re.sub(r'\*\*(.*?)\*\*', r'\1', clean, flags=re.S)
     clean = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'\1', clean, flags=re.I)
 
-    # Format into clean HTML paragraphs
     paragraphs = [p.strip() for p in clean.split("\n\n") if p.strip()]
     html_body = "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs)
 
@@ -149,33 +147,6 @@ def get_posts():
     return posts
 
 # ============================================================
-# SEREY AUTH TOKEN
-# ============================================================
-
-def get_token():
-    if SEREY_TOKEN:
-        return SEREY_TOKEN
-
-    print("Attempting to get auth token from Serey API...", flush=True)
-    payloads = [
-        {"username": SEREY_LOGIN, "password": SEREY_PASSWORD, "type": "posting"},
-        {"username": SEREY_LOGIN, "password": SEREY_PASSWORD}
-    ]
-    for p in payloads:
-        try:
-            r = requests.post(SEREY_AUTH_API, json=p, timeout=15)
-            if r.status_code == 200:
-                data = r.json()
-                t = data.get("token") or data.get("data", {}).get("token")
-                if t:
-                    print("✓ Received auth token via API.", flush=True)
-                    return t
-        except Exception:
-            pass
-
-    raise Exception("❌ Could not get SEREY_TOKEN. Please set SEREY_TOKEN in GitHub Secrets!")
-
-# ============================================================
 # PUBLISH VIA REST API
 # ============================================================
 
@@ -219,14 +190,13 @@ def publish_post_api(token, post):
 
     response = requests.post(SEREY_API_POST, json=payload, headers=headers, timeout=30)
     print(f"Serey API Response Code: {response.status_code}", flush=True)
-    print(f"Serey API Response Text: {response.text[:300]}", flush=True)
+    print(f"Serey API Response: {response.text[:300]}", flush=True)
 
     if response.status_code in [200, 201]:
         try:
             res_data = response.json()
             permlink = res_data.get("permlink") or res_data.get("data", {}).get("permlink")
             if permlink:
-                # পোস্ট সামারাইজেশন ট্রিগার করা
                 requests.post(SUMMARIZE_API, json={"author": SEREY_LOGIN, "permlink": permlink}, timeout=10)
         except Exception:
             pass
@@ -247,7 +217,9 @@ def main():
         print("❌ Missing STEEM_USERNAME!", flush=True)
         return
 
-    token = get_token()
+    token = SEREY_TOKEN
+    print("✓ Token loaded successfully.", flush=True)
+
     synced = load_synced()
     posts = get_posts()
     new_posts = [p for p in posts if p["id"] not in synced]
