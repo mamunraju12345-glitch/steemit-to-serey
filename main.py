@@ -12,7 +12,7 @@ import requests
 STEEM_USERNAME = os.environ.get("STEEM_USERNAME", "").strip()
 SEREY_LOGIN = os.environ.get("SEREY_LOGIN", os.environ.get("SEREY_USERNAME", "mamun")).replace("@", "").strip()
 
-# মামুন অ্যাকাউন্টের একদম নতুন ফ্রেশ টোকেন (এখনই জেনারেট হওয়া)
+# মামুন অ্যাকাউন্টের আসল পার্মানেন্ট টোকেন
 FALLBACK_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoicG9zdGluZyIsInVzZXJuYW1lIjoibWFtdW4iLCJwYXNzd29yZCI6IjVLNDhVSEF1a3JuTkNHUGVxeTczUkRNTlRBbm1HRm1RY2I4MzRrZUxNSndCQnpkWWJLQyIsImlhdCI6MTc5MDQyOTg0OH0.v5tdje9uHEQ6ckavhtAgQxQHEaPIqji1H09Jvk2uiTk"
 SEREY_TOKEN = os.environ.get("SEREY_TOKEN", FALLBACK_TOKEN).strip()
 
@@ -104,28 +104,43 @@ def format_body_and_thumbnail(body, metadata):
 
     return html_body, thumbnail
 
+# ============================================================
+# GET POSTS (OLDEST TO NEWEST)
+# ============================================================
+
 def get_posts():
     cutoff = datetime.now(timezone.utc) - timedelta(days=DAYS_LIMIT)
     posts, seen = [], set()
     start_author, start_permlink = None, None
+    reached_old = False
 
-    while len(posts) < 3000:
+    print(f"Collecting posts for the last {DAYS_LIMIT} days...", flush=True)
+    print(f"Cut-off date: {cutoff.strftime('%Y-%m-%d')}", flush=True)
+
+    while len(posts) < 3000 and not reached_old:
         params = {"tag": STEEM_USERNAME, "limit": 100}
         if start_author:
             params["start_author"] = start_author
             params["start_permlink"] = start_permlink
 
         res = rpc("condenser_api.get_discussions_by_blog", params)
-        if not res: break
+        if not res:
+            break
         batch = res[1:] if start_author else res
-        if not batch: break
+        if not batch:
+            break
 
         for p in batch:
-            if p.get("author") != STEEM_USERNAME: continue
+            if p.get("author") != STEEM_USERNAME:
+                continue
             pid = f"{p['author']}/{p['permlink']}"
-            if pid in seen: continue
+            if pid in seen:
+                continue
+
             created = datetime.strptime(p["created"], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-            if created < cutoff: return posts
+            if created < cutoff:
+                reached_old = True
+                break
 
             seen.add(pid)
             body_html, thumb = format_body_and_thumbnail(p.get("body", ""), p.get("json_metadata", "{}"))
@@ -137,11 +152,15 @@ def get_posts():
                 "created": p["created"]
             })
 
+        if reached_old:
+            break
+
         if res[-1]["author"] == start_author and res[-1]["permlink"] == start_permlink:
             break
         start_author, start_permlink = res[-1]["author"], res[-1]["permlink"]
         time.sleep(0.2)
 
+    # সবচেয়ে পুরনো পোস্টকে সবার আগে নিয়ে আসা (Oldest to Newest)
     posts.reverse()
     return posts
 
@@ -152,7 +171,6 @@ def get_posts():
 def publish_post_api(token, post):
     print(f"Submitting via REST API: {post['title']}", flush=True)
 
-    # হেডার এবং কুকি একসাথে পাঠানো হচ্ছে যাতে সার্ভার ১০০% অথোরাইজ করে
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:156.0) Gecko/20100101 Firefox/156.0",
         "Accept": "application/json, text/plain, */*",
@@ -212,6 +230,7 @@ def publish_post_api(token, post):
 def main():
     print("=" * 60)
     print("STEEM -> SEREY PURE REST API SYNC")
+    print("ORDER: OLDEST TO NEWEST")
     print("=" * 60)
 
     if not STEEM_USERNAME:
@@ -219,7 +238,7 @@ def main():
         return
 
     token = SEREY_TOKEN
-    print("✓ New fresh token loaded successfully.", flush=True)
+    print("✓ Token loaded successfully.", flush=True)
 
     synced = load_synced()
     posts = get_posts()
@@ -232,8 +251,10 @@ def main():
         print("No new posts to publish.")
         return
 
+    # সবার পুরনো পোস্টটি বেছে নেওয়া
     post_to_run = new_posts[0]
-    print(f"Target Post: {post_to_run['id']}", flush=True)
+    print(f"Target Post (Oldest): {post_to_run['id']}", flush=True)
+    print(f"Post Date: {post_to_run['created']}", flush=True)
 
     success = publish_post_api(token, post_to_run)
     if success:
