@@ -284,8 +284,6 @@ def extract_thumbnail_and_body(body, metadata):
     )
 
     # Convert Markdown links to plain text
-    # [Example](https://example.com)
-    # becomes Example
     body = re.sub(
         r'\[([^\]]+)\]\((https?://[^)]+)\)',
         r'\1',
@@ -607,7 +605,7 @@ def download_image(url):
 
 
 # ============================================================
-# LOGIN
+# LOGIN (FIXED & ROBUST)
 # ============================================================
 
 def login(page):
@@ -623,87 +621,119 @@ def login(page):
         timeout=60000
     )
 
-    page.wait_for_timeout(5000)
+    page.wait_for_timeout(4000)
 
     print(
-        f"After login URL: {page.url}",
+        f"Initial page URL: {page.url}",
         flush=True
     )
 
-    login_buttons = page.locator(
-        'a:has-text("Log in"), '
-        'button:has-text("Log in"), '
-        'a:has-text("Log In"), '
-        'button:has-text("Log In")'
+    # 1. চেক করুন অলরেডি লগইন করা আছে কিনা
+    logged_in_indicators = page.locator(
+        f'a[href*="/authors/{SEREY_LOGIN}"], '
+        'button:has-text("Logout"), a:has-text("Logout"), '
+        'button:has-text("লগআউট"), a:has-text("লগআউট"), '
+        '.ant-avatar, img[alt*="avatar"]'
     )
 
-    if (
-        login_buttons.count() > 0
-        and login_buttons.first.is_visible()
-    ):
+    if logged_in_indicators.count() > 0 and logged_in_indicators.first.is_visible():
+        print(
+            "✓ Already logged in Serey.",
+            flush=True
+        )
+        return
 
-        try:
+    # 2. লগইন বাটনে ক্লিক করার চেষ্টা
+    login_buttons = page.locator(
+        'button:has-text("Log in"), a:has-text("Log in"), '
+        'button:has-text("Log In"), a:has-text("Log In"), '
+        'button:has-text("লগইন"), a:has-text("লগইন"), '
+        'a[href*="/login"], button[class*="login"]'
+    )
 
-            login_buttons.first.click(
-                force=True,
-                timeout=15000
-            )
+    clicked = False
+    btn_count = login_buttons.count()
 
-            page.wait_for_timeout(3000)
+    if btn_count > 0:
+        for idx in range(btn_count):
+            btn = login_buttons.nth(idx)
+            try:
+                if btn.is_visible():
+                    print(f"Clicking login button #{idx + 1}...", flush=True)
+                    btn.click(timeout=10000)
+                    clicked = True
+                    page.wait_for_timeout(3000)
+                    break
+            except Exception as e:
+                print(f"Click attempt note: {e}", flush=True)
 
-        except Exception as e:
+    if not clicked:
+        print("Note: Login button not clicked or already on login page.", flush=True)
 
-            print(
-                f"Login button click note: {e}",
-                flush=True
-            )
+    # 3. ইনপুট বক্স সিলেক্টর (অনেকগুলো সম্ভাব্য সিলেক্টর রাখা হলো)
+    user_in = page.locator(
+        'input[id="username"], '
+        'input[name="username"], '
+        'input[placeholder*="Username" i], '
+        'input[placeholder*="ব্যবহারকারী" i], '
+        '.ant-modal input[type="text"], '
+        'input[type="text"]'
+    ).first
 
-        user_in = page.locator(
-            'input[placeholder*="Username" i], '
-            'input[type="text"]'
-        ).first
+    pass_in = page.locator(
+        'input[id="password"], '
+        'input[name="password"], '
+        'input[placeholder*="Private Key" i], '
+        'input[placeholder*="Password" i], '
+        '.ant-modal input[type="password"], '
+        'input[type="password"]'
+    ).first
 
-        pass_in = page.locator(
-            'input[placeholder*="Private Key" i], '
-            'input[placeholder*="Password" i], '
-            'input[type="password"]'
-        ).first
-
+    try:
         user_in.wait_for(
             state="visible",
-            timeout=20000
+            timeout=25000
         )
 
         pass_in.wait_for(
             state="visible",
-            timeout=20000
+            timeout=25000
         )
 
-        user_in.fill(
-            SEREY_LOGIN
-        )
+        user_in.fill(SEREY_LOGIN)
+        page.wait_for_timeout(500)
 
-        pass_in.fill(
-            SEREY_PASSWORD
-        )
+        pass_in.fill(SEREY_PASSWORD)
+        page.wait_for_timeout(500)
 
-        page.locator(
+        # সাবমিট বাটন ক্লিক
+        submit_btn = page.locator(
+            '.ant-modal button[type="submit"], '
+            '.ant-modal button:has-text("Log in"), '
+            '.ant-modal button:has-text("Log In"), '
+            'button[type="submit"], '
             'button:has-text("Log in"), '
             'button:has-text("Log In")'
-        ).last.click(
+        ).last
+
+        submit_btn.click(
             force=True,
-            timeout=20000
+            timeout=15000
         )
 
+        print("✓ Login form submitted.", flush=True)
         page.wait_for_timeout(7000)
 
-    else:
-
-        print(
-            "✓ Login fields not visible; "
-            "checking whether already logged in.",
-            flush=True
-        )
+    except Exception as e:
+        print(f"❌ Login failed: {e}", flush=True)
+        try:
+            page.screenshot(path="login_failed.png", full_page=True)
+            with open("login_failed.html", "w", encoding="utf-8") as f:
+                f.write(page.content())
+            print("📸 Debug screenshot 'login_failed.png' saved.", flush=True)
+        except Exception:
+            pass
+        raise e
 
     print(
         f"After login URL: {page.url}",
@@ -2473,31 +2503,42 @@ def main():
         )
 
     # --------------------------------------------------------
-    # PLAYWRIGHT
+    # PLAYWRIGHT (WITH STEALTH & ANTI-BOT FLAGS)
     # --------------------------------------------------------
 
     with sync_playwright() as p:
 
         browser = p.chromium.launch(
-            headless=True
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+            ]
         )
 
         context = browser.new_context(
             viewport={
-                "width": 1280,
-                "height": 900
+                "width": 1366,
+                "height": 768
             },
 
             user_agent=(
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/140.0 Safari/537.36"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
             )
         )
 
         page = context.new_page()
+
+        # Hide webdriver flag to avoid bot detection
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
 
         try:
 
