@@ -2,23 +2,27 @@ import os
 import json
 import re
 import time
-import mimetypes
 from datetime import datetime, timedelta, timezone
-
 import requests
-from playwright.sync_api import sync_playwright
+
+# ============================================================
+# SETTINGS & SECRETS
+# ============================================================
 
 STEEM_USERNAME = os.environ.get("STEEM_USERNAME", "").strip()
-SEREY_LOGIN = os.environ.get("SEREY_LOGIN", os.environ.get("SEREY_USERNAME", "")).replace("@", "").strip()
+SEREY_LOGIN = os.environ.get("SEREY_LOGIN", os.environ.get("SEREY_USERNAME", "mamun")).replace("@", "").strip()
 SEREY_PASSWORD = os.environ.get("SEREY_PASSWORD", "").strip()
 
-SEREY = "https://bengali.serey.io"
-NEW_POST = f"{SEREY}/blog/post/new"
-SYNC_FILE = "synced_posts.json"
+# GitHub Secret থেকে টোকেন নেওয়া
+SEREY_TOKEN = os.environ.get("SEREY_TOKEN", "").strip()
 
+SEREY_API_POST = "https://bengali.serey.io/api/posts"
+SEREY_AUTH_API = "https://bengali.serey.io/api/accounts/authenticate"
+SUMMARIZE_API = "https://global-api.serey.io/api/v2/serey-web/summarize-post"
+
+SYNC_FILE = "synced_posts.json"
 POSTS_PER_RUN = 1
 DAYS_LIMIT = 365
-TEMP_IMAGE_PREFIX = "temp_image"
 
 STEEM_NODES = [
     "https://api.steemit.com",
@@ -26,6 +30,10 @@ STEEM_NODES = [
     "https://api.moecki.online",
     "https://steem.619.io",
 ]
+
+# ============================================================
+# STEEM RPC
+# ============================================================
 
 def rpc(method, params):
     payload = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
@@ -40,6 +48,10 @@ def rpc(method, params):
         except Exception:
             pass
     raise Exception("All Steem RPC nodes failed")
+
+# ============================================================
+# SYNC FILE
+# ============================================================
 
 def load_synced():
     if not os.path.exists(SYNC_FILE):
@@ -57,7 +69,11 @@ def save_synced(data):
         json.dump(sorted(data), f, ensure_ascii=False, indent=2)
     os.replace(temp_file, SYNC_FILE)
 
-def extract_thumbnail_and_body(body, metadata):
+# ============================================================
+# BODY FORMATTING & THUMBNAIL
+# ============================================================
+
+def format_body_and_thumbnail(body, metadata):
     thumbnail = None
     try:
         meta = json.loads(metadata or "{}")
@@ -74,16 +90,22 @@ def extract_thumbnail_and_body(body, metadata):
         m = re.search(r'<img[^>]+src=["\'](https?://[^"\'>\s]+)', body, re.I)
         if m: thumbnail = m.group(1)
 
-    # Clean Markdown & HTML
-    body = re.sub(r'!\[[^\]]*\]\(\s*https?://[^)\s]+\s*\)', '', body, flags=re.I)
-    body = re.sub(r'<img\b[^>]*>', '', body, flags=re.I)
-    body = re.sub(r'<[^>]+>', '', body)
-    body = re.sub(r'^\s{0,3}#{1,6}\s*', '', body, flags=re.M)
-    body = re.sub(r'\*\*(.*?)\*\*', r'\1', body, flags=re.S)
-    body = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'\1', body, flags=re.I)
+    # Clean body
+    clean = re.sub(r'!\[[^\]]*\]\(\s*https?://[^)\s]+\s*\)', '', body, flags=re.I)
+    clean = re.sub(r'<img\b[^>]*>', '', clean, flags=re.I)
+    clean = re.sub(r'<[^>]+>', '', clean)
+    clean = re.sub(r'^\s{0,3}#{1,6}\s*', '', clean, flags=re.M)
+    clean = re.sub(r'\*\*(.*?)\*\*', r'\1', clean, flags=re.S)
+    clean = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'\1', clean, flags=re.I)
 
-    lines = [l.strip() for l in body.splitlines() if l.strip() and not re.fullmatch(r'https?://\S+', l.strip(), re.I)]
-    return "\n\n".join(lines).strip(), thumbnail
+    # Format into clean HTML paragraphs
+    paragraphs = [p.strip() for p in clean.split("\n\n") if p.strip()]
+    html_body = "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs)
+
+    if not thumbnail:
+        thumbnail = "https://bengali.serey.io/thumbnails/thumbnail.png"
+
+    return html_body, thumbnail
 
 def get_posts():
     cutoff = datetime.now(timezone.utc) - timedelta(days=DAYS_LIMIT)
@@ -109,11 +131,11 @@ def get_posts():
             if created < cutoff: return posts
 
             seen.add(pid)
-            clean_b, thumb = extract_thumbnail_and_body(p.get("body", ""), p.get("json_metadata", "{}"))
+            body_html, thumb = format_body_and_thumbnail(p.get("body", ""), p.get("json_metadata", "{}"))
             posts.append({
                 "id": pid,
                 "title": p.get("title", "").strip(),
-                "body": clean_b,
+                "body": body_html,
                 "thumbnail": thumb,
                 "created": p["created"]
             })
@@ -126,177 +148,129 @@ def get_posts():
     posts.reverse()
     return posts
 
-def download_image(url):
-    if not url: return None
-    try:
-        r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
-        r.raise_for_status()
-        ext = mimetypes.guess_extension(r.headers.get("content-type", "").split(";")[0]) or ".jpg"
-        fp = f"{TEMP_IMAGE_PREFIX}{ext}"
-        with open(fp, "wb") as f: f.write(r.content)
-        return fp
-    except Exception:
-        return None
+# ============================================================
+# SEREY AUTH TOKEN
+# ============================================================
 
-def clear_overlays(page):
-    try:
-        page.evaluate("""
-            () => {
-                document.querySelectorAll('.no-cookie-notice-overlay, [class*="cookie"]').forEach(e => e.remove());
-            }
-        """)
-    except Exception:
-        pass
+def get_token():
+    if SEREY_TOKEN:
+        return SEREY_TOKEN
 
-def login(page):
-    print("Logging into Serey...", flush=True)
-    page.goto(SEREY, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(3000)
-    clear_overlays(page)
-
-    if page.locator(f'a[href*="/authors/{SEREY_LOGIN}"], button:has-text("Logout")').count() > 0:
-        print("✓ Already logged in.", flush=True)
-        return
-
-    btn = page.locator('button:has-text("Log in"), a:has-text("Log in"), button:has-text("Log In")').first
-    if btn.is_visible():
-        btn.click()
-        page.wait_for_timeout(2000)
-
-    page.locator('input[placeholder*="Username" i], input[type="text"]').first.fill(SEREY_LOGIN)
-    page.locator('input[placeholder*="Private Key" i], input[placeholder*="Password" i], input[type="password"]').first.fill(SEREY_PASSWORD)
-    page.locator('.ant-modal button[type="submit"], button:has-text("Log in")').last.click(force=True)
-    page.wait_for_timeout(6000)
-    print("✓ Logged in.", flush=True)
-
-def publish(page, post):
-    print(f"Publishing: {post['title']}", flush=True)
-    page.goto(NEW_POST, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(4000)
-    clear_overlays(page)
-
-    # 1. Title
-    title_box = page.locator('input[placeholder*="title" i], textarea[placeholder*="title" i]').first
-    title_box.wait_for(state="visible", timeout=15000)
-    title_box.fill(post["title"])
-
-    # 2. Body
-    editor = page.locator('.ql-editor, div[contenteditable="true"]').first
-    editor.wait_for(state="visible", timeout=15000)
-    try:
-        editor.fill(post["body"])
-    except Exception:
-        editor.click()
-        page.keyboard.insert_text(post["body"])
-    page.wait_for_timeout(1000)
-
-    # 3. Image
-    img = download_image(post.get("thumbnail"))
-    if img:
+    print("Attempting to get auth token from Serey API...", flush=True)
+    payloads = [
+        {"username": SEREY_LOGIN, "password": SEREY_PASSWORD, "type": "posting"},
+        {"username": SEREY_LOGIN, "password": SEREY_PASSWORD}
+    ]
+    for p in payloads:
         try:
-            fi = page.locator('input[type="file"]')
-            if fi.count() > 0:
-                fi.first.set_input_files(img)
-                page.wait_for_timeout(4000)
-                # Crop confirm
-                crop_ok = page.locator('.ant-modal:visible button:has-text("OK"), .ant-modal:visible button:has-text("Confirm")').first
-                if crop_ok.is_visible():
-                    crop_ok.click(force=True)
-                    page.wait_for_timeout(2000)
+            r = requests.post(SEREY_AUTH_API, json=p, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                t = data.get("token") or data.get("data", {}).get("token")
+                if t:
+                    print("✓ Received auth token via API.", flush=True)
+                    return t
         except Exception:
             pass
 
-    clear_overlays(page)
+    raise Exception("❌ Could not get SEREY_TOKEN. Please set SEREY_TOKEN in GitHub Secrets!")
 
-    # 4. Click Publish (Main Editor Screen)
-    print("Clicking editor Publish button...", flush=True)
-    pub_btn = page.locator('button:has-text("Publish"), a:has-text("Publish")').first
-    pub_btn.scroll_into_view_if_needed()
-    pub_btn.click(force=True)
-    page.wait_for_timeout(3000)
+# ============================================================
+# PUBLISH VIA REST API
+# ============================================================
 
-    # 5. Select Category (Select box anywhere on modal or page)
-    print("Selecting category...", flush=True)
-    try:
-        select_box = page.locator('.ant-modal:visible .ant-select, .ant-select-selector:visible').first
-        if select_box.is_visible():
-            select_box.click(force=True)
-            page.wait_for_timeout(1000)
-            opt = page.locator('.ant-select-dropdown:visible .ant-select-item-option').first
-            if opt.is_visible():
-                opt.click(force=True)
-                print(f"✓ Category selected: {opt.inner_text().strip()}", flush=True)
-                page.wait_for_timeout(1000)
-    except Exception as e:
-        print(f"Category selection error: {e}", flush=True)
+def publish_post_api(token, post):
+    print(f"Submitting via REST API: {post['title']}", flush=True)
 
-    # 6. Click Final Publish
-    clear_overlays(page)
-    modal = page.locator('.ant-modal:visible').last
-    if modal.is_visible():
-        final_btn = modal.locator('button:has-text("Publish"), button:has-text("Submit"), button.ant-btn-primary').last
-    else:
-        final_btn = page.locator('button:has-text("Publish"), button:has-text("Submit")').last
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:156.0) Gecko/20100101 Firefox/156.0",
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json; charset=UTF-8",
+        "authorization": f"Bearer {token}",
+        "Origin": "https://bengali.serey.io",
+        "Referer": "https://bengali.serey.io/write/new"
+    }
 
-    print("Triggering final submission...", flush=True)
-    final_btn.evaluate("btn => { btn.disabled = false; btn.click(); }")
+    payload = {
+        "images": [post["thumbnail"]],
+        "videos": [],
+        "categories": "News",
+        "subcategories": ["Others"],
+        "title": post["title"],
+        "desc": "",
+        "body": post["body"],
+        "other_blockchain": False,
+        "post_to_blockchain": True,
+        "forever": False,
+        "hive_community": "",
+        "steem_community": "",
+        "post_to_hive": False,
+        "post_to_steem": False,
+        "steem_tags": [],
+        "hive_tags": [],
+        "is_post_video_component": False,
+        "is_video_component_only": False,
+        "is_ai_generated": False,
+        "type": 1,
+        "publish_scope_community_id": None,
+        "site_credit": '<p>This was posted using <a title="This link will take you away current website" href="https://bengali.serey.io" rel="nofollow noopener">Serey.io</a> cross platform posting.</p>',
+        "community_id": 2
+    }
 
-    # 7. কঠোর সত্যতা যাচাই (Strict Verification)
-    # URL পরিবর্তন হয়েছে কি না বা নতুন পোস্ট তৈরি হয়েছে কি না নিশ্চিত করা
-    print("Awaiting post redirection...", flush=True)
-    for _ in range(20):
-        page.wait_for_timeout(1000)
-        curr = page.url.lower()
-        if "/blog/post/new" not in curr and ("authors" in curr or "blog" in curr):
-            print(f"✓ REAL SUCCESS! Published URL: {page.url}", flush=True)
-            if img and os.path.exists(img): os.remove(img)
-            return page.url
+    response = requests.post(SEREY_API_POST, json=payload, headers=headers, timeout=30)
+    print(f"Serey API Response Code: {response.status_code}", flush=True)
+    print(f"Serey API Response Text: {response.text[:300]}", flush=True)
 
-    # যদি ২০ সেকেন্ডেও পেজ পরিবর্তন না হয়, তার মানে পোস্ট ফেইল করেছে!
-    print("❌ Post did not submit! Taking error screenshot...", flush=True)
-    page.screenshot(path="post_failed.png", full_page=True)
-    if img and os.path.exists(img): os.remove(img)
-    return None  # কোনো ফেক সাকসেস দেওয়া হবে না!
+    if response.status_code in [200, 201]:
+        try:
+            res_data = response.json()
+            permlink = res_data.get("permlink") or res_data.get("data", {}).get("permlink")
+            if permlink:
+                # পোস্ট সামারাইজেশন ট্রিগার করা
+                requests.post(SUMMARIZE_API, json={"author": SEREY_LOGIN, "permlink": permlink}, timeout=10)
+        except Exception:
+            pass
+        return True
+
+    return False
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
-    if not STEEM_USERNAME or not SEREY_LOGIN or not SEREY_PASSWORD:
-        print("❌ Missing Secrets!", flush=True)
+    print("=" * 60)
+    print("STEEM -> SEREY PURE REST API SYNC")
+    print("=" * 60)
+
+    if not STEEM_USERNAME:
+        print("❌ Missing STEEM_USERNAME!", flush=True)
         return
 
+    token = get_token()
     synced = load_synced()
     posts = get_posts()
     new_posts = [p for p in posts if p["id"] not in synced]
 
+    print(f"Total Steem Posts: {len(posts)}")
+    print(f"Unsynced Posts: {len(new_posts)}")
+
     if not new_posts:
-        print("No new posts to publish.", flush=True)
+        print("No new posts to publish.")
         return
 
     post_to_run = new_posts[0]
     print(f"Target Post: {post_to_run['id']}", flush=True)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"]
-        )
-        context = browser.new_context(
-            viewport={"width": 1366, "height": 768},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"
-        )
-        page = context.new_page()
-
-        try:
-            login(page)
-            res = publish(page, post_to_run)
-            if res:
-                print(f"✓✓✓ SUCCESSFULLY SYNCED: {post_to_run['id']} ✓✓✓", flush=True)
-                synced.add(post_to_run["id"])
-                save_synced(synced)
-            else:
-                print(f"❌ POST FAILED: {post_to_run['id']} (NOT SAVED TO JSON)", flush=True)
-                raise Exception("Publish verification failed! Page did not redirect.")
-        finally:
-            browser.close()
+    success = publish_post_api(token, post_to_run)
+    if success:
+        print(f"\n✓✓✓ SUCCESSFULLY PUBLISHED: {post_to_run['id']} ✓✓✓", flush=True)
+        synced.add(post_to_run["id"])
+        save_synced(synced)
+        print("✓ Updated synced_posts.json successfully.", flush=True)
+    else:
+        print(f"\n❌ FAILED TO PUBLISH: {post_to_run['id']}", flush=True)
+        raise Exception("API Submission failed!")
 
 if __name__ == "__main__":
     main()
