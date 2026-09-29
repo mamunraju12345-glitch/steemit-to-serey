@@ -12,7 +12,6 @@ SEREY_LOGIN = os.environ.get("SEREY_LOGIN", "mamun").replace("@", "").strip()
 FALLBACK_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoicG9zdGluZyIsInVzZXJuYW1lIjoibWFtdW4iLCJwYXNzd29yZCI6IjVLNDhVSEF1a3JuTkNHUGVxeTczUkRNTlRBbm1HRm1RY2I4MzRrZUxNSndCQnpkWWJLQyIsImlhdCI6MTc5MDQyOTg0OH0.v5tdje9uHEQ6ckavhtAgQxQHEaPIqji1H09Jvk2uiTk"
 SEREY_TOKEN = os.environ.get("SEREY_TOKEN", FALLBACK_TOKEN).strip()
 
-# Bearer প্রিফিক্স নিশ্চিত করা
 AUTH_HEADER = (
     f"Bearer {SEREY_TOKEN}"
     if not SEREY_TOKEN.startswith("Bearer ")
@@ -51,89 +50,104 @@ def save_voted(data):
 
 
 # ============================================================
-# FETCH POSTS (MULTIPLE ROBUST METHODS)
+# FETCH POSTS (LIVE ENDPOINTS ONLY)
 # ============================================================
+
+
+def parse_post_data(raw_data):
+    """রেসপন্স অবজেক্ট থেকে পোস্ট লিস্ট ফিল্টার করা"""
+    if isinstance(raw_data, list):
+        return raw_data
+    if isinstance(raw_data, dict):
+        for key in ["posts", "data", "result", "rows"]:
+            if (
+                key in raw_data
+                and isinstance(raw_data[key], list)
+                and len(raw_data[key]) > 0
+            ):
+                return raw_data[key]
+            if (
+                key in raw_data
+                and isinstance(raw_data[key], dict)
+                and "posts" in raw_data[key]
+            ):
+                return raw_data[key]["posts"]
+    return []
 
 
 def get_posts_to_vote():
     print("Fetching recent posts from Bengali Community...", flush=True)
 
-    # মেথড ১: Serey Blockchain RPC Node (সবচেয়ে নির্ভরযোগ্য, ডাউন হয় না)
-    rpc_nodes = ["https://rpc.serey.io", "https://api.serey.io"]
-    for node in rpc_nodes:
-        try:
-            print(f"Trying Blockchain RPC: {node}...", flush=True)
-            payload = {
-                "jsonrpc": "2.0",
-                "method": "condenser_api.get_discussions_by_created",
-                "params": [{"tag": "bengali", "limit": 25}],
-                "id": 1,
-            }
-            r = requests.post(node, json=payload, timeout=10)
-            if r.status_code == 200:
-                result = r.json().get("result", [])
-                if result and len(result) > 0:
-                    print(
-                        f"✓ Found {len(result)} posts via Blockchain RPC!",
-                        flush=True,
-                    )
-                    return result
-        except Exception as e:
-            print(f"RPC Error ({node}): {e}", flush=True)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "Authorization": AUTH_HEADER,
+        "Origin": "https://bengali.serey.io",
+        "Referer": "https://bengali.serey.io/",
+    }
 
-    # মেথড ২: Serey Web GraphQL API
+    # টেস্ট ১: bengali.serey.io এর নিজস্ব ইন্টারনাল এপিআই (POST মেথড - 405 ফিক্স)
     try:
-        print("Trying Serey GraphQL API...", flush=True)
-        graphql_url = "https://global-api.serey.io/graphql"
-        query = {
-            "query": """
-            query GetCommunityPosts {
-                posts(community_id: 2, limit: 20, sort: "created") {
-                    id
-                    author
-                    permlink
-                    title
-                }
-            }
-            """
-        }
-        r = requests.post(graphql_url, json=query, timeout=10)
+        url = "https://bengali.serey.io/api/posts"
+        payload = {"limit": 20, "community_id": 2, "offset": 0}
+        print(f"Trying POST: {url}...", flush=True)
+        r = requests.post(url, json=payload, headers=headers, timeout=12)
+        print(f"Response: {r.status_code}", flush=True)
         if r.status_code == 200:
-            posts = r.json().get("data", {}).get("posts", [])
+            posts = parse_post_data(r.json())
             if posts:
                 print(
-                    f"✓ Found {len(posts)} posts via GraphQL!", flush=True
+                    f"✓ Found {len(posts)} posts via Bengali Serey API!",
+                    flush=True,
                 )
                 return posts
     except Exception as e:
-        print(f"GraphQL Error: {e}", flush=True)
+        print(f"Error bengali.serey.io POST: {e}", flush=True)
 
-    # মেথড ৩: Serey নতুন REST API
-    rest_urls = [
-        "https://global-api.serey.io/api/v1/posts?communityId=2&limit=20",
-        "https://global-api.serey.io/post/getAllPosts?limit=20&community_id=2",
+    # টেস্ট ২: https://api.serey.io লাইভ নোডে সেরি RPC কল
+    try:
+        url = "https://api.serey.io"
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": [
+                "condenser_api",
+                "get_discussions_by_created",
+                [{"tag": "serey-bengali", "limit": 20}],
+            ],
+            "id": 1,
+        }
+        print(f"Trying Node RPC: {url}...", flush=True)
+        r = requests.post(url, json=payload, timeout=12)
+        print(f"Response: {r.status_code}", flush=True)
+        if r.status_code == 200:
+            posts = r.json().get("result", [])
+            if posts:
+                print(f"✓ Found {len(posts)} posts via Live RPC!", flush=True)
+                return posts
+    except Exception as e:
+        print(f"Error api.serey.io RPC: {e}", flush=True)
+
+    # টেস্ট ৩: Frontend Community Feed API (Web App যেখান থেকে পোস্ট লোড করে)
+    web_feed_urls = [
+        "https://bengali.serey.io/api/feeds/community/2",
+        "https://bengali.serey.io/api/posts/community/2?limit=20",
+        "https://bengali.serey.io/api/posts/created?limit=20",
     ]
-    for url in rest_urls:
+
+    for u in web_feed_urls:
         try:
-            r = requests.get(url, timeout=10)
-            print(
-                f"Checking REST URL: {url} -> Status: {r.status_code}",
-                flush=True,
-            )
+            print(f"Checking URL: {u}...", flush=True)
+            r = requests.get(u, headers=headers, timeout=10)
+            print(f"Status: {r.status_code}", flush=True)
             if r.status_code == 200:
-                data = r.json()
-                posts = (
-                    data.get("data")
-                    if isinstance(data, dict)
-                    else (data if isinstance(data, list) else None)
-                )
-                if posts and isinstance(posts, list) and len(posts) > 0:
-                    print(
-                        f"✓ Found {len(posts)} posts via REST API!", flush=True
-                    )
+                posts = parse_post_data(r.json())
+                if posts:
+                    print(f"✓ Found {len(posts)} posts from {u}!", flush=True)
                     return posts
         except Exception as e:
-            print(f"REST error ({url}): {e}", flush=True)
+            print(f"Error fetching from {u}: {e}", flush=True)
 
     return []
 
@@ -145,7 +159,7 @@ def get_posts_to_vote():
 
 def cast_vote(author, permlink):
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json; charset=UTF-8",
         "authorization": AUTH_HEADER,
@@ -208,7 +222,6 @@ def main():
             )
             break
 
-        # বিভিন্ন ধরনের রেসপন্স ফরম্যাট হ্যান্ডেল করা
         author = (
             p.get("author")
             or p.get("author_username")
@@ -221,7 +234,7 @@ def main():
         if not author or not permlink:
             continue
 
-        if author.lower() == SEREY_LOGIN.lower():
+        if str(author).lower() == SEREY_LOGIN.lower():
             continue
 
         post_id = f"{author}/{permlink}"
